@@ -23,6 +23,7 @@ import android.view.accessibility.AccessibilityWindowInfo
 import android.widget.Toast
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * Tracks the foreground app. While a blocked app is open it listens for a shake;
@@ -266,8 +267,11 @@ class LockService : AccessibilityService(), SensorEventListener {
         }
         pendingNukes[nuke.id] = nuke
         if (nuke.sender !in friendNames) {
+            // New friend: look up their name, but don't let a slow network delay the impact.
             Cloud.scope.launch {
-                runCatching { friendNames = Cloud.friends().associate { it.id to it.name } }
+                withTimeoutOrNull(NAME_LOOKUP_MS) {
+                    runCatching { friendNames = Cloud.friends().associate { it.id to it.name } }
+                }
                 tryDetonate()
             }
         } else {
@@ -407,6 +411,7 @@ class LockService : AccessibilityService(), SensorEventListener {
         const val CHARGE_IDLE_MS = 800L // stopped shaking for this long = lock is set
         const val PULSE_MIN_GAP_MS = 120L
         const val NUKE_LOCK_MS = 30_000L
+        const val NAME_LOOKUP_MS = 1_500L
         const val NUKE_TTL_MS = 10 * 60_000L // a nuke waits this long for you to open a blocked app
         const val MAX_APP_LOCK_MIN = 60
         const val MAX_PHONE_LOCK_MIN = 10

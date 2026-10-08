@@ -30,6 +30,7 @@
         <activity
             android:name=".BlockedActivity"
             android:excludeFromRecents="true"
+            android:screenOrientation="portrait"
             android:exported="false"
             android:launchMode="singleTask"
             android:taskAffinity="com.shakelock.blocked" />

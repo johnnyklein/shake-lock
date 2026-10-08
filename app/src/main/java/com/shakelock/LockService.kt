@@ -239,12 +239,18 @@ class LockService : AccessibilityService(), SensorEventListener {
         return setOfNotNull(packageName, dialer, store.insteadApp) + EMERGENCY_PACKAGES
     }
 
-    /** Package of the focused app window (ignores the keyboard, notification shade and other system windows). */
+    /**
+     * Package of the focused app window (ignores the keyboard, notification shade and other system windows).
+     * Installed web apps (like To-Dodo) run inside Chrome, so their window is matched to the
+     * "instead" app by its title.
+     */
     private fun foregroundPackage(): String? {
         val appWindows = windows.filter { it.type == AccessibilityWindowInfo.TYPE_APPLICATION }
         val window = appWindows.firstOrNull { it.isFocused }
             ?: appWindows.firstOrNull { it.isActive }
             ?: return null
+        val instead = store.insteadApp
+        if (instead != null && window.title?.toString() == appLabel(instead)) return instead
         return window.root?.packageName?.toString()
     }
 

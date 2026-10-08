@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">Shake Lock</string>
+    <string name="accessibility_description">Lets Shake Lock see which app is open, so it can listen for a shake while you\'re in a blocked app and keep you out of it during a lock. It only checks which app is in front and never reads or stores what is on screen.</string>
+</resources>

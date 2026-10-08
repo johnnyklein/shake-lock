@@ -30,7 +30,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -40,6 +40,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -91,8 +94,8 @@ private fun SetupName(onDone: (String) -> Unit) {
         Text("Nuke your friends", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(8.dp))
         Text(
-            "Add a friend, then nuke them while they doomscroll: their blocked apps get bombed and locked for 30 seconds. " +
-                "Only people you share your code with can nuke you, 3 times a day max.",
+            "Catch a friend doomscrolling and nuke them: their blocked apps get bombed and locked for 30 seconds. " +
+                "It only hits if they're scrolling right then. Only people you share your code with can nuke you, 3 times a day max.",
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Spacer(Modifier.height(24.dp))
@@ -131,8 +134,15 @@ private fun FriendsList(store: LockStore) {
     var recent by remember { mutableStateOf<List<Nuke>>(emptyList()) }
     var loadError by remember { mutableStateOf<String?>(null) }
     var reload by remember { mutableIntStateOf(0) }
-    val nukeStatus = remember { mutableStateMapOf<String, String>() }
     var accept by remember { mutableStateOf(store.acceptNukes) }
+
+    // Back from the launch screen: refresh nukes left and recent nukes.
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_RESUME) reload++ }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 
     LaunchedEffect(reload) {
         runCatching {
@@ -233,30 +243,19 @@ private fun FriendsList(store: LockStore) {
                         Column(Modifier.weight(1f)) {
                             Text(friend.name, fontWeight = FontWeight.SemiBold)
                             Text(
-                                nukeStatus[friend.id] ?: "$left of $NUKES_PER_DAY nukes left today",
+                                "$left of $NUKES_PER_DAY nukes left today",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
                         Button(
-                            enabled = left > 0 && nukeStatus[friend.id] != "Launching… 🚀",
+                            enabled = left > 0,
                             onClick = {
-                                nukeStatus[friend.id] = "Launching… 🚀"
-                                scope.launch {
-                                    runCatching {
-                                        val sent = Cloud.sendNuke(friend.id)
-                                        // Give their phone a moment to report back.
-                                        delay(3000)
-                                        Cloud.nuke(sent.id)
-                                    }.onSuccess { result ->
-                                        nukeStatus[friend.id] = when (result?.status) {
-                                            "hit" -> "💥 Direct hit! They were scrolling."
-                                            "expired" -> "Fizzled, they've got nukes switched off."
-                                            else -> "Armed. It hits when they next open a blocked app."
-                                        }
-                                    }.onFailure { nukeStatus[friend.id] = it.message ?: "Didn't launch" }
-                                    recent = runCatching { Cloud.recentNukes() }.getOrDefault(recent)
-                                }
+                                context.startActivity(
+                                    Intent(context, NukeLaunchActivity::class.java)
+                                        .putExtra(NukeLaunchActivity.EXTRA_TARGET_ID, friend.id)
+                                        .putExtra(NukeLaunchActivity.EXTRA_TARGET_NAME, friend.name)
+                                )
                             },
                             colors = ButtonDefaults.buttonColors(containerColor = Coral, contentColor = Color(0xFF3B0A00)),
                         ) { Text("💥 Nuke", fontWeight = FontWeight.Bold) }
@@ -279,8 +278,8 @@ private fun FriendsList(store: LockStore) {
                 val line = if (nuke.sender == me?.id) "You → ${names[nuke.target] ?: "?"}" else "${names[nuke.sender] ?: "?"} → you"
                 val outcome = when (nuke.status) {
                     "hit" -> "💥 hit"
-                    "expired" -> "fizzled"
-                    else -> "armed"
+                    "expired" -> "missed"
+                    else -> "no answer"
                 }
                 Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 4.dp)) {
                     Text(line, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
@@ -299,7 +298,7 @@ private fun FriendsList(store: LockStore) {
                     Column(Modifier.weight(1f)) {
                         Text("Can be nuked", fontWeight = FontWeight.Medium)
                         Text(
-                            "Switch off for a shield: incoming nukes fizzle.",
+                            "Switch off for a shield: incoming nukes miss.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )

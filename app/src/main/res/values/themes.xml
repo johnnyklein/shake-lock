@@ -1,0 +1,8 @@
+<resources>
+    <!-- See-through window: the nuke flies over whatever app is open. -->
+    <style name="Theme.ShakeLock.Overlay" parent="@android:style/Theme.Translucent.NoTitleBar">
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowAnimationStyle">@null</item>
+    </style>
+</resources>

@@ -90,7 +90,14 @@ class LockStore(context: Context) {
 
     fun remainingMillis() = (lockedUntil - System.currentTimeMillis()).coerceAtLeast(0)
 
-    fun startLock(scope: LockScope, durationMs: Long, pkg: String, sessionMs: Long, trigger: Trigger, nukedBy: String? = null) = prefs.edit {
+    fun startLock(
+        scope: LockScope,
+        durationMs: Long,
+        pkg: String,
+        sessionMs: Long,
+        trigger: Trigger,
+        nukedBy: String? = null,
+    ) = prefs.edit {
         val now = System.currentTimeMillis()
         putString(KEY_ACTIVE, scope.name)
         putLong(KEY_LOCKED_AT, now)

@@ -36,6 +36,21 @@
             android:launchMode="singleTask"
             android:taskAffinity="com.shakelock.blocked" />
 
+        <activity
+            android:name=".NukeActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:launchMode="singleTask"
+            android:screenOrientation="portrait"
+            android:taskAffinity="com.shakelock.blocked"
+            android:theme="@style/Theme.ShakeLock.Overlay" />
+
+        <activity
+            android:name=".NukeLaunchActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:screenOrientation="portrait" />
+
         <service
             android:name=".LockService"
             android:exported="true"

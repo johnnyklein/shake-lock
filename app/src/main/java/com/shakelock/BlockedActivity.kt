@@ -37,8 +37,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableLongStateOf
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -170,10 +168,6 @@ private fun BlockedScreen(
     val total = (store.lockedUntil - store.lockedAt).coerceAtLeast(1)
     var mode by remember { mutableStateOf(LockMode.TIMER) }
     val charging by Charging.state.collectAsState()
-    // A fresh nuke plays its animation once, then the normal lock screen takes over.
-    var nukeShownFor by rememberSaveable { mutableLongStateOf(0L) }
-    val showNuke = store.lastTrigger == Trigger.NUKE && store.lockedAt != nukeShownFor &&
-        System.currentTimeMillis() - store.lockedAt < 5_000
     // Keeps ticking: while charging there's no lock yet, it starts when you stop shaking.
     val remaining by produceState(store.remainingMillis()) {
         while (true) {
@@ -197,8 +191,6 @@ private fun BlockedScreen(
         ) {
             if (charging.active) {
                 ChargingView(charging)
-            } else if (showNuke) {
-                NukeAnimation(sender = store.nukedBy ?: "A friend") { nukeShownFor = store.lockedAt }
             } else if (remaining > 0 && mode != LockMode.TIMER) {
                 Text(
                     "${if (phoneLock) "PHONE LOCKED" else "LOCKED"} · ${formatRemaining(remaining)}",

@@ -139,8 +139,13 @@ private fun MainScreen(store: LockStore, stats: StatsLog, serviceEnabled: Boolea
             ) {
                 Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("Setup") })
                 Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("Stats") })
+                Tab(selected = tab == 2, onClick = { tab = 2 }, text = { Text("Friends") })
             }
-            if (tab == 0) SetupScreen(store, stats, serviceEnabled, batteryUnrestricted) else StatsScreen(stats)
+            when (tab) {
+                0 -> SetupScreen(store, stats, serviceEnabled, batteryUnrestricted)
+                1 -> StatsScreen(stats)
+                else -> FriendsScreen(store)
+            }
         }
     }
 }

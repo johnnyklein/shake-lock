@@ -37,6 +37,8 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -168,6 +170,10 @@ private fun BlockedScreen(
     val total = (store.lockedUntil - store.lockedAt).coerceAtLeast(1)
     var mode by remember { mutableStateOf(LockMode.TIMER) }
     val charging by Charging.state.collectAsState()
+    // A fresh nuke plays its animation once, then the normal lock screen takes over.
+    var nukeShownFor by rememberSaveable { mutableLongStateOf(0L) }
+    val showNuke = store.lastTrigger == Trigger.NUKE && store.lockedAt != nukeShownFor &&
+        System.currentTimeMillis() - store.lockedAt < 5_000
     // Keeps ticking: while charging there's no lock yet, it starts when you stop shaking.
     val remaining by produceState(store.remainingMillis()) {
         while (true) {
@@ -191,6 +197,8 @@ private fun BlockedScreen(
         ) {
             if (charging.active) {
                 ChargingView(charging)
+            } else if (showNuke) {
+                NukeAnimation(sender = store.nukedBy ?: "A friend") { nukeShownFor = store.lockedAt }
             } else if (remaining > 0 && mode != LockMode.TIMER) {
                 Text(
                     "${if (phoneLock) "PHONE LOCKED" else "LOCKED"} · ${formatRemaining(remaining)}",
@@ -224,13 +232,18 @@ private fun BlockedScreen(
                 )
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    if (phoneLock) "Time for a real break" else "$appLabel can wait",
+                    when {
+                        store.lastTrigger == Trigger.NUKE -> "Nuked!"
+                        phoneLock -> "Time for a real break"
+                        else -> "$appLabel can wait"
+                    },
                     color = OnNight,
                     fontSize = 26.sp,
                     fontWeight = FontWeight.SemiBold,
                     textAlign = TextAlign.Center,
                 )
                 val why = when {
+                    store.lastTrigger == Trigger.NUKE -> "${store.nukedBy ?: "A friend"} nuked you. 💥"
                     store.lastTrigger == Trigger.REENTRY -> "Your ${store.reentryMinutes} minutes back are up."
                     store.lastSessionMs >= 60_000 -> "You were on $appLabel for ${formatDuration(store.lastSessionMs)}."
                     else -> null
@@ -267,7 +280,7 @@ private fun BlockedScreen(
                         modifier = Modifier.fillMaxWidth().height(52.dp),
                     ) { Text("Phone / emergency call") }
                 }
-                if (store.earlyUnlock) {
+                if (store.earlyUnlock && store.lastTrigger != Trigger.NUKE) {
                     Spacer(Modifier.height(20.dp))
                     if (store.flashcards) {
                         TextButton(onClick = { mode = LockMode.UNLOCK }) {

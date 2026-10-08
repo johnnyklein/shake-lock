@@ -22,6 +22,7 @@ import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityWindowInfo
 import android.widget.Toast
 import androidx.core.content.ContextCompat
+import kotlinx.coroutines.launch
 
 /**
  * Tracks the foreground app. While a blocked app is open it listens for a shake;
@@ -58,6 +59,11 @@ class LockService : AccessibilityService(), SensorEventListener {
     private var chargeLastSpike = 0L
     private var chargeExtraMinutes = 0
 
+    // Nukes from friends: wait here until you open a blocked app (or they expire)
+    private val pendingNukes = mutableMapOf<Long, Nuke>()
+    private val handledNukes = mutableSetOf<Long>()
+    private var friendNames = mapOf<String, String>()
+
     private val screenReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             if (intent.action == Intent.ACTION_SCREEN_OFF) {
@@ -68,6 +74,7 @@ class LockService : AccessibilityService(), SensorEventListener {
                 currentPackage = null
             } else {
                 scheduleCheck()
+                startNukes()
             }
         }
     }
@@ -84,6 +91,8 @@ class LockService : AccessibilityService(), SensorEventListener {
         }
         ContextCompat.registerReceiver(this, screenReceiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED)
         Diagnostics.update { it.copy(serviceRunning = true) }
+        Cloud.inboxStarter = ::startNukes
+        startNukes()
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent) = scheduleCheck()
@@ -111,6 +120,7 @@ class LockService : AccessibilityService(), SensorEventListener {
         }
         if (keepOut) kickOut(pkg)
         updateSegment(if (inBlockedApp && !keepOut) pkg else null)
+        tryDetonate()
         setListening((inBlockedApp && !store.isLocked()) || chargingPkg != null)
     }
 
@@ -146,8 +156,12 @@ class LockService : AccessibilityService(), SensorEventListener {
             nudge(pkg, sessionMs)
         }
 
+        tryDetonate()
+        if (segmentPkg == null) return
+
         val sinceLockEnded = now - store.lockedUntil
-        if (store.reentryLimit && store.lockedUntil > 0 && sinceLockEnded in 0 until REENTRY_WINDOW_MS &&
+        if (store.reentryLimit && store.lastTrigger != Trigger.NUKE && store.lockedUntil > 0 &&
+            sinceLockEnded in 0 until REENTRY_WINDOW_MS &&
             reentryUsed(now) >= store.reentryMinutes * 60_000L
         ) {
             lock(pkg, Trigger.REENTRY, extraMinutes = 0)
@@ -211,20 +225,72 @@ class LockService : AccessibilityService(), SensorEventListener {
     }
 
     private fun lock(pkg: String, trigger: Trigger, extraMinutes: Int) {
-        val now = System.currentTimeMillis()
         val scope = store.shakeLocks
-        val minutes = lockMinutes(scope, extraMinutes)
+        startLock(pkg, trigger, scope, lockMinutes(scope, extraMinutes) * 60_000L, nukedBy = null)
+    }
+
+    private fun startLock(pkg: String, trigger: Trigger, scope: LockScope, durationMs: Long, nukedBy: String?) {
+        val now = System.currentTimeMillis()
         val sessionMs = if (sessionStart > 0) now - sessionStart else 0L
-        Log.d(TAG, "lock $pkg: $trigger, $scope, $minutes min, session ${sessionMs / 1000}s")
+        Log.d(TAG, "lock $pkg: $trigger, $scope, ${durationMs / 1000}s, session ${sessionMs / 1000}s")
 
         updateSegment(null)
-        stats.add(LockEvent(now, pkg, scope, minutes, sessionMs, trigger))
-        store.startLock(scope, minutes, pkg, sessionMs, trigger)
+        stats.add(LockEvent(now, pkg, scope, durationMs, sessionMs, trigger))
+        store.startLock(scope, durationMs, pkg, sessionMs, trigger, nukedBy)
         sessionStart = 0
         Diagnostics.update { it.copy(shakes = it.shakes + 1) }
         vibrate(VibrationEffect.createOneShot(120, VibrationEffect.DEFAULT_AMPLITUDE))
         kickOut(pkg)
         setListening(false)
+    }
+
+    /** Starts listening for nukes once Friends is set up; also picks up ones sent while offline. */
+    private fun startNukes() {
+        if (!Cloud.configured || store.cloudName == null) return
+        Cloud.listen(::onNukeArrived)
+        Cloud.scope.launch {
+            runCatching {
+                friendNames = Cloud.friends().associate { it.id to it.name }
+                Cloud.armedForMe(System.currentTimeMillis() - NUKE_TTL_MS).forEach(::onNukeArrived)
+            }.onFailure { Log.w(TAG, "nuke catch-up failed", it) }
+        }
+    }
+
+    private fun onNukeArrived(nuke: Nuke) {
+        if (nuke.id in handledNukes || nuke.id in pendingNukes || nuke.status != "armed") return
+        Log.d(TAG, "incoming nuke ${nuke.id} from ${nuke.sender}")
+        if (!store.acceptNukes) {
+            handledNukes += nuke.id
+            Cloud.scope.launch { Cloud.reportNuke(nuke.id, "expired") }
+            return
+        }
+        pendingNukes[nuke.id] = nuke
+        if (nuke.sender !in friendNames) {
+            Cloud.scope.launch {
+                runCatching { friendNames = Cloud.friends().associate { it.id to it.name } }
+                tryDetonate()
+            }
+        } else {
+            tryDetonate()
+        }
+    }
+
+    /** A pending nuke lands as soon as you're in a blocked app and not locked already. */
+    private fun tryDetonate() {
+        if (pendingNukes.isEmpty()) return
+        val now = System.currentTimeMillis()
+        pendingNukes.values.filter { now - it.createdAtMillis > NUKE_TTL_MS }.forEach { expired ->
+            pendingNukes.remove(expired.id)
+            handledNukes += expired.id
+            Cloud.scope.launch { Cloud.reportNuke(expired.id, "expired") }
+        }
+        val pkg = segmentPkg ?: return
+        if (store.isLocked() || chargingPkg != null) return
+        val nuke = pendingNukes.values.minByOrNull { it.createdAtMillis } ?: return
+        pendingNukes.remove(nuke.id)
+        handledNukes += nuke.id
+        Cloud.scope.launch { Cloud.reportNuke(nuke.id, "hit") }
+        startLock(pkg, Trigger.NUKE, LockScope.APPS, NUKE_LOCK_MS, friendNames[nuke.sender] ?: "A friend")
     }
 
     /** Base duration, doubled per earlier lock today (escalation), plus minutes earned by shaking longer. */
@@ -340,6 +406,8 @@ class LockService : AccessibilityService(), SensorEventListener {
         const val CHARGE_SPIKE_FACTOR = 0.8f // still counts as shaking, slightly below the trigger threshold
         const val CHARGE_IDLE_MS = 800L // stopped shaking for this long = lock is set
         const val PULSE_MIN_GAP_MS = 120L
+        const val NUKE_LOCK_MS = 30_000L
+        const val NUKE_TTL_MS = 10 * 60_000L // a nuke waits this long for you to open a blocked app
         const val MAX_APP_LOCK_MIN = 60
         const val MAX_PHONE_LOCK_MIN = 10
         val EMERGENCY_PACKAGES = setOf(

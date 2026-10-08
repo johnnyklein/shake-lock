@@ -13,7 +13,7 @@ data class LockEvent(
     override val at: Long,
     val pkg: String,
     val scope: LockScope,
-    val minutes: Int,
+    val durationMs: Long,
     val sessionMs: Long,
     val trigger: Trigger,
 ) : StatEvent
@@ -35,7 +35,7 @@ class StatsLog(context: Context) {
         val json = when (event) {
             is LockEvent -> JSONObject()
                 .put("t", "lock").put("pkg", event.pkg).put("scope", event.scope.name)
-                .put("min", event.minutes).put("session", event.sessionMs).put("trigger", event.trigger.name)
+                .put("ms", event.durationMs).put("session", event.sessionMs).put("trigger", event.trigger.name)
             is UseEvent -> JSONObject().put("t", "use").put("pkg", event.pkg).put("until", event.until)
             is EarlyUnlockEvent -> JSONObject().put("t", "early")
             is NudgeEvent -> JSONObject().put("t", "nudge").put("pkg", event.pkg)
@@ -52,14 +52,16 @@ class StatsLog(context: Context) {
             .sortedBy { it.at }
     }
 
-    fun locksToday() = read(startOfDay(System.currentTimeMillis())).count { it is LockEvent }
+    /** Your own locks today (nukes from friends don't count towards escalation). */
+    fun locksToday() = read(startOfDay(System.currentTimeMillis())).count { it is LockEvent && it.trigger != Trigger.NUKE }
 
     private fun parse(json: JSONObject): StatEvent? {
         val at = json.getLong("at")
         return when (json.getString("t")) {
             "lock" -> LockEvent(
                 at, json.getString("pkg"), LockScope.valueOf(json.getString("scope")),
-                json.getInt("min"), json.getLong("session"), Trigger.valueOf(json.getString("trigger")),
+                if (json.has("ms")) json.getLong("ms") else json.getInt("min") * 60_000L,
+                json.getLong("session"), Trigger.valueOf(json.getString("trigger")),
             )
             "use" -> UseEvent(at, json.getString("pkg"), json.getLong("until"))
             "early" -> EarlyUnlockEvent(at)

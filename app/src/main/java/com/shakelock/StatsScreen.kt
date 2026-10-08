@@ -208,7 +208,7 @@ private fun summarize(events: List<StatEvent>, now: Long, context: Context): Wee
 
     // When a lock really ended: its planned end, or an early unlock during it.
     fun lockEnd(lock: LockEvent): Long {
-        val planned = lock.at + lock.minutes * 60_000L
+        val planned = lock.at + lock.durationMs
         val early = earlyUnlocks.firstOrNull { it.at in lock.at..planned }?.at
         return minOf(early ?: planned, now)
     }

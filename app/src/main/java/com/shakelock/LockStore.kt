@@ -9,7 +9,7 @@ import kotlin.reflect.KProperty
 enum class LockScope { APPS, PHONE }
 
 /** Why a lock started. */
-enum class Trigger { SHAKE, REENTRY }
+enum class Trigger { SHAKE, REENTRY, NUKE }
 
 /** Settings and lock state, shared between the UI and [LockService]. */
 class LockStore(context: Context) {
@@ -56,6 +56,17 @@ class LockStore(context: Context) {
             putBoolean(KEY_INSTEAD_CHOSEN, true)
         }
 
+    /** Name shown to friends; null until you set up Friends. */
+    var cloudName: String?
+        get() = prefs.getString(KEY_CLOUD_NAME, null)
+        set(value) = prefs.edit { putString(KEY_CLOUD_NAME, value) }
+
+    /** Off = incoming nukes fizzle. */
+    var acceptNukes by boolPref("accept_nukes", true)
+
+    /** Who nuked you, for the last lock. */
+    val nukedBy: String? get() = prefs.getString(KEY_NUKED_BY, null)
+
     /** False until the user (or auto-detection) picked an [insteadApp]. */
     val insteadAppChosen get() = prefs.getBoolean(KEY_INSTEAD_CHOSEN, false)
 
@@ -79,11 +90,12 @@ class LockStore(context: Context) {
 
     fun remainingMillis() = (lockedUntil - System.currentTimeMillis()).coerceAtLeast(0)
 
-    fun startLock(scope: LockScope, minutes: Int, pkg: String, sessionMs: Long, trigger: Trigger) = prefs.edit {
+    fun startLock(scope: LockScope, durationMs: Long, pkg: String, sessionMs: Long, trigger: Trigger, nukedBy: String? = null) = prefs.edit {
         val now = System.currentTimeMillis()
         putString(KEY_ACTIVE, scope.name)
         putLong(KEY_LOCKED_AT, now)
-        putLong(KEY_UNTIL, now + minutes * 60_000L)
+        putLong(KEY_UNTIL, now + durationMs)
+        putString(KEY_NUKED_BY, nukedBy)
         putString(KEY_LAST_PKG, pkg)
         putLong(KEY_LAST_SESSION, sessionMs)
         putString(KEY_LAST_TRIGGER, trigger.name)
@@ -109,6 +121,8 @@ class LockStore(context: Context) {
         const val KEY_INSTEAD_CHOSEN = "instead_app_chosen"
         const val KEY_UNTIL = "locked_until"
         const val KEY_LOCKED_AT = "locked_at"
+        const val KEY_CLOUD_NAME = "cloud_name"
+        const val KEY_NUKED_BY = "nuked_by"
         const val KEY_ACTIVE = "active_lock"
         const val KEY_LAST_PKG = "last_lock_pkg"
         const val KEY_LAST_SESSION = "last_session_ms"

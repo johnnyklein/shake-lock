@@ -47,6 +47,9 @@ private data class WeekStats(
     val medianComebackMs: Long?,
     val topApps: List<Pair<String, Long>>,
     val escapeStreak: Int,
+    val cardsAnswered: Int,
+    val cardsRight: Int,
+    val wordsKnown: Int,
 )
 
 @Composable
@@ -101,6 +104,12 @@ fun StatsScreen(stats: StatsLog) {
                     Fact("Re-locks from comeback limit", data.autoRelocks.toString())
                     Fact("Early unlocks", data.earlyUnlocks.toString())
                     Fact("Nudges", data.nudges.toString())
+                    Fact(
+                        "Spanish cards answered",
+                        if (data.cardsAnswered == 0) "0"
+                        else "${data.cardsAnswered} (${data.cardsRight * 100 / data.cardsAnswered}% right)",
+                    )
+                    Fact("Spanish words you know", data.wordsKnown.toString())
                 }
             }
         }
@@ -230,6 +239,8 @@ private fun summarize(events: List<StatEvent>, now: Long, context: Context): Wee
         .take(5)
         .map { label(it.key) to it.value }
 
+    val weekCards = events.filterIsInstance<CardEvent>().filter { it.at >= weekStart }
+
     // Days in a row with at least one escape, counting back from today (or yesterday, if none yet today).
     var streak = 0
     var day = if (escapesBetween(today, addDays(today, 1)) > 0) today else addDays(today, -1)
@@ -250,6 +261,9 @@ private fun summarize(events: List<StatEvent>, now: Long, context: Context): Wee
         medianComebackMs = comebacks.getOrNull(comebacks.size / 2),
         topApps = topApps,
         escapeStreak = streak,
+        cardsAnswered = weekCards.size,
+        cardsRight = weekCards.count { it.correct },
+        wordsKnown = Srs(context).knownCount(),
     )
 }
 

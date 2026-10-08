@@ -25,6 +25,8 @@ data class EarlyUnlockEvent(override val at: Long) : StatEvent
 
 data class NudgeEvent(override val at: Long, val pkg: String) : StatEvent
 
+data class CardEvent(override val at: Long, val card: String, val correct: Boolean) : StatEvent
+
 /** Append-only event log (one JSON object per line) that the stats screen is computed from. */
 class StatsLog(context: Context) {
     private val file = File(context.filesDir, "events.jsonl")
@@ -37,6 +39,7 @@ class StatsLog(context: Context) {
             is UseEvent -> JSONObject().put("t", "use").put("pkg", event.pkg).put("until", event.until)
             is EarlyUnlockEvent -> JSONObject().put("t", "early")
             is NudgeEvent -> JSONObject().put("t", "nudge").put("pkg", event.pkg)
+            is CardEvent -> JSONObject().put("t", "card").put("card", event.card).put("ok", event.correct)
         }.put("at", event.at)
         synchronized(FILE_LOCK) { file.appendText("$json\n") }
     }
@@ -61,6 +64,7 @@ class StatsLog(context: Context) {
             "use" -> UseEvent(at, json.getString("pkg"), json.getLong("until"))
             "early" -> EarlyUnlockEvent(at)
             "nudge" -> NudgeEvent(at, json.getString("pkg"))
+            "card" -> CardEvent(at, json.getString("card"), json.getBoolean("ok"))
             else -> null
         }
     }

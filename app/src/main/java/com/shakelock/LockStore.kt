@@ -37,12 +37,16 @@ class LockStore(context: Context) {
 
     // Smart lock experiments, all off by default.
     var escalate by boolPref("escalate", false)
-    var strengthScales by boolPref("strength_scales", false)
+    var chargeByShaking by boolPref("charge_by_shaking", false)
     var reentryLimit by boolPref("reentry_limit", false)
     var reentryMinutes by intPref("reentry_minutes", 5)
     var earlyUnlock by boolPref("early_unlock", false)
     var nudge by boolPref("nudge", false)
     var nudgeMinutes by intPref("nudge_minutes", 20)
+
+    /** Spanish flash cards on the lock screen; also the price for unlocking early. */
+    var flashcards by boolPref("flashcards", true)
+    var unlockCards by intPref("unlock_cards", 5)
 
     /** App offered on the lock screen as the better alternative (e.g. To-Dodo). Always usable. */
     var insteadApp: String?

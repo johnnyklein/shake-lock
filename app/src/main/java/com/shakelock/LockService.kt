@@ -52,9 +52,16 @@ class LockService : AccessibilityService(), SensorEventListener {
     private var reentryUsedMs = 0L // time in blocked apps since the lock ending at [reentryForLock]
     private var reentryForLock = 0L
 
+    // "Keep shaking = longer lock"
+    private var chargingPkg: String? = null
+    private var chargeStart = 0L
+    private var chargeLastSpike = 0L
+    private var chargeExtraMinutes = 0
+
     private val screenReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             if (intent.action == Intent.ACTION_SCREEN_OFF) {
+                chargingPkg?.let { finishCharging(it) }
                 // Screen off counts as leaving the app.
                 updateSegment(null)
                 setListening(false)
@@ -104,7 +111,7 @@ class LockService : AccessibilityService(), SensorEventListener {
         }
         if (keepOut) kickOut(pkg)
         updateSegment(if (inBlockedApp && !keepOut) pkg else null)
-        setListening(inBlockedApp && !store.isLocked())
+        setListening((inBlockedApp && !store.isLocked()) || chargingPkg != null)
     }
 
     /** Starts/ends timing of a blocked app being in front. */
@@ -143,7 +150,7 @@ class LockService : AccessibilityService(), SensorEventListener {
         if (store.reentryLimit && store.lockedUntil > 0 && sinceLockEnded in 0 until REENTRY_WINDOW_MS &&
             reentryUsed(now) >= store.reentryMinutes * 60_000L
         ) {
-            lock(pkg, Trigger.REENTRY, shakePeakG = null)
+            lock(pkg, Trigger.REENTRY, extraMinutes = 0)
             return
         }
         handler.postDelayed(tick, TICK_MS)
@@ -160,16 +167,53 @@ class LockService : AccessibilityService(), SensorEventListener {
         return reentryUsedMs + current
     }
 
-    private fun onShake(peakG: Float) {
+    private fun onShake(@Suppress("UNUSED_PARAMETER") peakG: Float) {
         val pkg = currentPackage ?: return
-        if (pkg !in store.blockedApps || store.isLocked()) return
-        lock(pkg, Trigger.SHAKE, peakG)
+        if (chargingPkg != null || pkg !in store.blockedApps || store.isLocked()) return
+        if (store.chargeByShaking) startCharging(pkg) else lock(pkg, Trigger.SHAKE, extraMinutes = 0)
     }
 
-    private fun lock(pkg: String, trigger: Trigger, shakePeakG: Float?) {
+    /** First shake: cover the app with the charging screen and keep counting while you shake. */
+    private fun startCharging(pkg: String) {
+        val now = System.currentTimeMillis()
+        chargingPkg = pkg
+        chargeStart = now
+        chargeLastSpike = now
+        chargeExtraMinutes = 0
+        Charging.state.value = Charging.State(active = true, baseMinutes = lockMinutes(store.shakeLocks, 0), pulse = now)
+        vibrate(VibrationEffect.createOneShot(60, VibrationEffect.DEFAULT_AMPLITUDE))
+        kickOut(pkg)
+    }
+
+    private fun onChargeReading(gForce: Float) {
+        val pkg = chargingPkg ?: return
+        val now = System.currentTimeMillis()
+        if (gForce >= store.shakeThreshold * CHARGE_SPIKE_FACTOR) {
+            val pulse = now - chargeLastSpike > PULSE_MIN_GAP_MS
+            chargeLastSpike = now
+            val extra = ((now - chargeStart) / 1000).toInt()
+            if (extra > chargeExtraMinutes) {
+                chargeExtraMinutes = extra
+                vibrate(VibrationEffect.createOneShot(25, VibrationEffect.DEFAULT_AMPLITUDE))
+            }
+            if (pulse || extra > Charging.state.value.extraMinutes) {
+                Charging.state.value = Charging.state.value.copy(extraMinutes = chargeExtraMinutes, pulse = now)
+            }
+        } else if (now - chargeLastSpike > CHARGE_IDLE_MS) {
+            finishCharging(pkg)
+        }
+    }
+
+    private fun finishCharging(pkg: String) {
+        chargingPkg = null
+        lock(pkg, Trigger.SHAKE, chargeExtraMinutes)
+        Charging.state.value = Charging.State()
+    }
+
+    private fun lock(pkg: String, trigger: Trigger, extraMinutes: Int) {
         val now = System.currentTimeMillis()
         val scope = store.shakeLocks
-        val minutes = lockMinutes(scope, shakePeakG)
+        val minutes = lockMinutes(scope, extraMinutes)
         val sessionMs = if (sessionStart > 0) now - sessionStart else 0L
         Log.d(TAG, "lock $pkg: $trigger, $scope, $minutes min, session ${sessionMs / 1000}s")
 
@@ -183,20 +227,13 @@ class LockService : AccessibilityService(), SensorEventListener {
         setListening(false)
     }
 
-    /** Base duration, doubled per earlier lock today (escalation) and up to 3x for a hard shake. */
-    private fun lockMinutes(scope: LockScope, shakePeakG: Float?): Int {
+    /** Base duration, doubled per earlier lock today (escalation), plus minutes earned by shaking longer. */
+    private fun lockMinutes(scope: LockScope, extraMinutes: Int): Int {
         var minutes = if (scope == LockScope.PHONE) store.phoneLockMinutes else store.lockMinutes
         if (store.escalate) {
             minutes *= 1 shl stats.locksToday().coerceAtMost(6)
         }
-        if (store.strengthScales && shakePeakG != null) {
-            val extra = shakePeakG - store.shakeThreshold
-            minutes *= when {
-                extra >= HARD_SHAKE_EXTRA_G -> 3
-                extra >= MEDIUM_SHAKE_EXTRA_G -> 2
-                else -> 1
-            }
-        }
+        minutes += extraMinutes
         return minutes.coerceAtMost(if (scope == LockScope.PHONE) MAX_PHONE_LOCK_MIN else MAX_APP_LOCK_MIN)
     }
 
@@ -272,6 +309,7 @@ class LockService : AccessibilityService(), SensorEventListener {
 
     override fun onSensorChanged(event: SensorEvent) {
         val gForce = shakeDetector.onSensorChanged(event)
+        onChargeReading(gForce)
         // ~50 readings a second: only push to the status screen occasionally or on a new peak.
         val count = ++sensorEventCount
         if (count % 50 == 0L || gForce > Diagnostics.state.value.peakG) {
@@ -299,8 +337,9 @@ class LockService : AccessibilityService(), SensorEventListener {
         const val TICK_MS = 10_000L
         const val SESSION_GAP_MS = 60_000L // away for longer than this = new session
         const val REENTRY_WINDOW_MS = 60 * 60_000L // comeback limit applies for an hour after a lock
-        const val MEDIUM_SHAKE_EXTRA_G = 0.75f
-        const val HARD_SHAKE_EXTRA_G = 1.5f
+        const val CHARGE_SPIKE_FACTOR = 0.8f // still counts as shaking, slightly below the trigger threshold
+        const val CHARGE_IDLE_MS = 800L // stopped shaking for this long = lock is set
+        const val PULSE_MIN_GAP_MS = 120L
         const val MAX_APP_LOCK_MIN = 60
         const val MAX_PHONE_LOCK_MIN = 10
         val EMERGENCY_PACKAGES = setOf(

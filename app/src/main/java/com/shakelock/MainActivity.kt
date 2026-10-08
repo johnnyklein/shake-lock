@@ -214,6 +214,8 @@ private fun SetupScreen(store: LockStore, stats: StatsLog, serviceEnabled: Boole
 
         item { SmartLockCard(store) }
 
+        item { FlashcardCard(store) }
+
         item { InsteadAppCard(store, apps) }
 
         item { CalibrateCard(store) }
@@ -478,7 +480,7 @@ private fun MinuteChips(options: List<Int>, selected: Int, onSelect: (Int) -> Un
 @Composable
 private fun SmartLockCard(store: LockStore) {
     var escalate by remember { mutableStateOf(store.escalate) }
-    var strength by remember { mutableStateOf(store.strengthScales) }
+    var charge by remember { mutableStateOf(store.chargeByShaking) }
     var reentry by remember { mutableStateOf(store.reentryLimit) }
     var reentryMinutes by remember { mutableIntStateOf(store.reentryMinutes) }
     var early by remember { mutableStateOf(store.earlyUnlock) }
@@ -492,10 +494,10 @@ private fun SmartLockCard(store: LockStore) {
             escalate,
         ) { escalate = it; store.escalate = it }
         SwitchRow(
-            "Harder shake = longer lock",
-            "Shake a bit harder for 2× the time, really hard for 3×.",
-            strength,
-        ) { strength = it; store.strengthScales = it }
+            "Keep shaking = longer lock",
+            "One shake starts the lock, every extra second you keep shaking adds a minute.",
+            charge,
+        ) { charge = it; store.chargeByShaking = it }
         SwitchRow(
             "Limited comeback",
             "After a lock you get $reentryMinutes min in blocked apps, then it locks again (for the next hour).",
@@ -506,7 +508,7 @@ private fun SmartLockCard(store: LockStore) {
         }
         SwitchRow(
             "Unlock early, with friction",
-            "Lock screen gets an unlock button: wait 30 s, then type a sentence to get back in.",
+            "Lock screen gets an unlock button. With flash cards on you answer Spanish cards, otherwise you wait 30 s and type a sentence.",
             early,
         ) { early = it; store.earlyUnlock = it }
         SwitchRow(
@@ -516,6 +518,43 @@ private fun SmartLockCard(store: LockStore) {
         ) { nudge = it; store.nudge = it }
         if (nudge) {
             MinuteChips(listOf(10, 20, 30), nudgeMinutes) { nudgeMinutes = it; store.nudgeMinutes = it }
+        }
+    }
+}
+
+/** Spanish micro-learning on the lock screen. */
+@Composable
+private fun FlashcardCard(store: LockStore) {
+    val context = LocalContext.current
+    var enabled by remember { mutableStateOf(store.flashcards) }
+    var unlockCards by remember { mutableIntStateOf(store.unlockCards) }
+    val known = remember { Srs(context).knownCount() }
+    val total = remember { SpanishDeck.load(context).size }
+
+    SettingsCard("Learn while locked", "Spanish → English, $known of $total words known so far.") {
+        SwitchRow(
+            "Spanish flash cards",
+            "Practise common words on the lock screen. Wrong answers come back soon, known words fade out.",
+            enabled,
+        ) { enabled = it; store.flashcards = it }
+        if (enabled) {
+            Spacer(Modifier.height(4.dp))
+            Text("Right answers to unlock early", style = MaterialTheme.typography.labelLarge)
+            Text(
+                "Only used when Unlock early is on in Smart locks.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(6.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf(5, 10, 15).forEach { option ->
+                    FilterChip(
+                        selected = option == unlockCards,
+                        onClick = { unlockCards = option; store.unlockCards = option },
+                        label = { Text("$option cards") },
+                    )
+                }
+            }
         }
     }
 }

@@ -34,6 +34,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -44,6 +45,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -142,6 +144,8 @@ class BlockedActivity : ComponentActivity() {
     }
 }
 
+private enum class LockMode { TIMER, LEARN, UNLOCK }
+
 private const val UNLOCK_PHRASE = "I choose to keep scrolling"
 private const val UNLOCK_WAIT_SECONDS = 30
 private const val BREATH_MS = 4000
@@ -162,8 +166,11 @@ private fun BlockedScreen(
 ) {
     val phoneLock = store.activeLock == LockScope.PHONE
     val total = (store.lockedUntil - store.lockedAt).coerceAtLeast(1)
+    var mode by remember { mutableStateOf(LockMode.TIMER) }
+    val charging by Charging.state.collectAsState()
+    // Keeps ticking: while charging there's no lock yet, it starts when you stop shaking.
     val remaining by produceState(store.remainingMillis()) {
-        while (value > 0) {
+        while (true) {
             delay(250)
             value = store.remainingMillis()
         }
@@ -182,7 +189,32 @@ private fun BlockedScreen(
             verticalArrangement = Arrangement.Center,
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            if (remaining > 0) {
+            if (charging.active) {
+                ChargingView(charging)
+            } else if (remaining > 0 && mode != LockMode.TIMER) {
+                Text(
+                    "${if (phoneLock) "PHONE LOCKED" else "LOCKED"} · ${formatRemaining(remaining)}",
+                    color = Coral,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 2.sp,
+                    fontSize = 13.sp,
+                )
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    if (mode == LockMode.UNLOCK) "Get ${store.unlockCards} right to unlock" else "Spanish practice",
+                    color = OnNight,
+                    fontSize = 22.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    textAlign = TextAlign.Center,
+                )
+                Spacer(Modifier.height(20.dp))
+                FlashCardQuiz(
+                    goal = if (mode == LockMode.UNLOCK) store.unlockCards else null,
+                    onGoal = onUnlockEarly,
+                )
+                Spacer(Modifier.height(16.dp))
+                TextButton(onClick = { mode = LockMode.TIMER }) { Text("Back to the timer", color = OnNightMuted) }
+            } else if (remaining > 0) {
                 Text(
                     if (phoneLock) "PHONE LOCKED" else "LOCKED",
                     color = Coral,
@@ -220,6 +252,14 @@ private fun BlockedScreen(
                     ) { Text("Open $insteadLabel instead", fontWeight = FontWeight.SemiBold) }
                     Spacer(Modifier.height(12.dp))
                 }
+                if (store.flashcards) {
+                    OutlinedButton(
+                        onClick = { mode = LockMode.LEARN },
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = OnNight),
+                        modifier = Modifier.fillMaxWidth().height(52.dp),
+                    ) { Text("Learn Spanish while you wait") }
+                    Spacer(Modifier.height(12.dp))
+                }
                 if (phoneLock) {
                     OutlinedButton(
                         onClick = onEmergencyCall,
@@ -229,7 +269,13 @@ private fun BlockedScreen(
                 }
                 if (store.earlyUnlock) {
                     Spacer(Modifier.height(20.dp))
-                    EarlyUnlock(onUnlockEarly)
+                    if (store.flashcards) {
+                        TextButton(onClick = { mode = LockMode.UNLOCK }) {
+                            Text("Unlock early: get ${store.unlockCards} Spanish cards right", color = OnNightMuted)
+                        }
+                    } else {
+                        EarlyUnlock(onUnlockEarly)
+                    }
                 }
             } else {
                 Text("Lock is over", color = OnNight, fontSize = 28.sp, fontWeight = FontWeight.SemiBold)
@@ -244,6 +290,49 @@ private fun BlockedScreen(
             }
         }
     }
+}
+
+/** Grows while you keep shaking: every second of shaking adds a minute. */
+@Composable
+private fun ChargingView(state: Charging.State) {
+    val growth by animateFloatAsState(
+        targetValue = (0.4f + 0.06f * state.extraMinutes).coerceAtMost(1f),
+        animationSpec = tween(300),
+        label = "growth",
+    )
+    var bump by remember { mutableStateOf(false) }
+    LaunchedEffect(state.pulse) {
+        bump = true
+        delay(90)
+        bump = false
+    }
+    val bumpScale by animateFloatAsState(if (bump) 1.07f else 1f, tween(90), label = "bump")
+
+    Text("KEEP SHAKING", color = Coral, fontWeight = FontWeight.Bold, letterSpacing = 3.sp, fontSize = 13.sp)
+    Spacer(Modifier.height(8.dp))
+    Text("Every second adds a minute", color = OnNightMuted, fontSize = 16.sp)
+    Spacer(Modifier.height(24.dp))
+    Box(Modifier.size(300.dp), contentAlignment = Alignment.Center) {
+        Canvas(Modifier.fillMaxSize()) {
+            val radius = size.minDimension / 2 * growth * bumpScale
+            drawCircle(
+                brush = Brush.radialGradient(listOf(Coral.copy(alpha = 0.55f), Coral.copy(alpha = 0f)), center, radius),
+                radius = radius,
+            )
+            drawCircle(Coral, radius * 0.62f)
+        }
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text("+${state.extraMinutes}", color = OnNight, fontSize = 64.sp, fontWeight = FontWeight.Bold)
+            Text("min", color = OnNight, fontSize = 16.sp)
+        }
+    }
+    Spacer(Modifier.height(24.dp))
+    Text(
+        "Lock: ${state.baseMinutes + state.extraMinutes} min",
+        color = OnNight,
+        fontSize = 22.sp,
+        fontWeight = FontWeight.SemiBold,
+    )
 }
 
 /** Ring that empties as the lock runs out, with a slow breathing circle inside. */

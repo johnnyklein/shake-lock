@@ -15,33 +15,43 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
@@ -49,23 +59,26 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.core.graphics.drawable.toBitmap
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -79,16 +92,17 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         val store = LockStore(this)
+        val stats = StatsLog(this)
         setContent {
             ShakeLockTheme {
-                MainScreen(store, StatsLog(this), serviceEnabled, batteryUnrestricted)
+                MainScreen(store, stats, serviceEnabled, batteryUnrestricted)
             }
         }
     }
 
     override fun onResume() {
         super.onResume()
-        // Re-check every time we come back from the accessibility settings screen.
+        // Re-check every time we come back from the settings screens.
         serviceEnabled = isServiceEnabled()
         batteryUnrestricted = getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(packageName)
     }
@@ -111,202 +125,124 @@ private val SENSITIVITIES = listOf("Gentle" to 1.6f, "Normal" to 2.0f, "Hard" to
 @Composable
 private fun MainScreen(store: LockStore, stats: StatsLog, serviceEnabled: Boolean, batteryUnrestricted: Boolean) {
     var tab by rememberSaveable { mutableIntStateOf(0) }
-    Scaffold { padding ->
+    Scaffold(containerColor = MaterialTheme.colorScheme.background) { padding ->
         Column(Modifier.padding(padding).fillMaxSize()) {
-            TabRow(selectedTabIndex = tab) {
+            Text(
+                "Shake Lock",
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(start = 20.dp, top = 12.dp, bottom = 4.dp),
+            )
+            TabRow(
+                selectedTabIndex = tab,
+                containerColor = MaterialTheme.colorScheme.background,
+            ) {
                 Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("Setup") })
                 Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("Stats") })
             }
-            if (tab == 0) SetupScreen(store, serviceEnabled, batteryUnrestricted) else StatsScreen(stats)
+            if (tab == 0) SetupScreen(store, stats, serviceEnabled, batteryUnrestricted) else StatsScreen(stats)
         }
     }
 }
 
 @Composable
-private fun SetupScreen(store: LockStore, serviceEnabled: Boolean, batteryUnrestricted: Boolean) {
+private fun SetupScreen(store: LockStore, stats: StatsLog, serviceEnabled: Boolean, batteryUnrestricted: Boolean) {
     val context = LocalContext.current
     var blocked by remember { mutableStateOf(store.blockedApps) }
     var scope by remember { mutableStateOf(store.shakeLocks) }
     var appMinutes by remember { mutableIntStateOf(store.lockMinutes) }
     var phoneMinutes by remember { mutableIntStateOf(store.phoneLockMinutes) }
-    var threshold by remember { mutableFloatStateOf(store.shakeThreshold) }
-    val diag by Diagnostics.state.collectAsState()
     var query by remember { mutableStateOf("") }
     val apps by produceState<List<AppEntry>?>(null) {
         value = withContext(Dispatchers.IO) { loadApps(context) }
     }
-    val remaining by produceState(store.remainingMillis()) {
-        while (true) {
-            value = store.remainingMillis()
-            delay(1000)
-        }
-    }
+    // Blocked apps first, in the order they were when the screen opened (so rows don't jump on tap).
+    val initiallyBlocked = remember { store.blockedApps }
+    val sortedApps = remember(apps) { apps?.sortedByDescending { it.packageName in initiallyBlocked } }
 
     LazyColumn(Modifier.fillMaxSize()) {
         item {
-            Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
-                Text("Shake Lock", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    "Caught yourself doomscrolling? Shake the phone while in one of the apps below and " +
-                        if (scope == LockScope.PHONE) "your whole phone gets locked for $phoneMinutes min."
-                        else "all of them get locked for $appMinutes min.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
+            HeroCard(store, stats, serviceEnabled, scope, if (scope == LockScope.PHONE) phoneMinutes else appMinutes, blocked, apps)
         }
 
         if (!serviceEnabled) {
             item {
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                WarningCard(
+                    "Turn on Shake Lock",
+                    "Accessibility settings → Shake Lock (maybe under \"Installed apps\" or \"Downloaded apps\") → on.",
                 ) {
-                    Column(Modifier.padding(16.dp)) {
-                        Text("Turn on Shake Lock", fontWeight = FontWeight.Bold)
-                        Spacer(Modifier.height(4.dp))
-                        Text("Open Accessibility settings → Shake Lock (may be under \"Installed apps\" or \"Downloaded apps\") → turn it on.")
-                        Spacer(Modifier.height(12.dp))
-                        Button(onClick = {
-                            context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-                        }) { Text("Open accessibility settings") }
+                    Button(onClick = { context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }) {
+                        Text("Open accessibility settings")
                     }
                 }
             }
         }
 
         if (!batteryUnrestricted) {
-            item {
-                BatteryCard()
-            }
-        }
-
-        if (remaining > 0) {
-            item {
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-                ) {
-                    Text(
-                        "Locked for ${formatRemaining(remaining)} more",
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(16.dp),
-                    )
-                }
-            }
+            item { BatteryCard() }
         }
 
         item {
-            Text(
-                "When you shake, lock",
-                style = MaterialTheme.typography.titleMedium,
-                modifier = Modifier.padding(start = 16.dp, top = 16.dp, end = 16.dp),
-            )
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.padding(horizontal = 16.dp),
-            ) {
-                listOf(LockScope.APPS to "Selected apps", LockScope.PHONE to "Whole phone").forEach { (option, name) ->
-                    FilterChip(
-                        selected = scope == option,
-                        onClick = {
-                            scope = option
-                            store.shakeLocks = option
-                        },
-                        label = { Text(name) },
-                    )
+            SettingsCard("When you shake") {
+                LockScopeSelector(scope) {
+                    scope = it
+                    store.shakeLocks = it
                 }
-            }
-            if (scope == LockScope.PHONE) {
                 Text(
-                    "Everything except the phone app is blocked, including the home screen.",
+                    if (scope == LockScope.PHONE) "Everything except calls and your \"instead\" app is blocked, even the home screen."
+                    else "All the apps you tick below get locked.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(horizontal = 16.dp),
+                    modifier = Modifier.padding(top = 8.dp, bottom = 12.dp),
                 )
-            }
-            Text(
-                "Lock duration",
-                style = MaterialTheme.typography.titleMedium,
-                modifier = Modifier.padding(start = 16.dp, top = 16.dp, end = 16.dp),
-            )
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp),
-            ) {
+                Text("Lock for", style = MaterialTheme.typography.labelLarge)
                 val phone = scope == LockScope.PHONE
-                (if (phone) PHONE_LOCK_MINUTES else APP_LOCK_MINUTES).forEach { option ->
-                    FilterChip(
-                        selected = option == if (phone) phoneMinutes else appMinutes,
-                        onClick = {
-                            if (phone) {
-                                phoneMinutes = option
-                                store.phoneLockMinutes = option
-                            } else {
-                                appMinutes = option
-                                store.lockMinutes = option
-                            }
-                        },
-                        label = { Text("$option min") },
-                    )
+                MinuteChips(
+                    if (phone) PHONE_LOCK_MINUTES else APP_LOCK_MINUTES,
+                    if (phone) phoneMinutes else appMinutes,
+                ) {
+                    if (phone) {
+                        phoneMinutes = it
+                        store.phoneLockMinutes = it
+                    } else {
+                        appMinutes = it
+                        store.lockMinutes = it
+                    }
                 }
             }
         }
 
-        item {
-            SmartLockSection(store)
-        }
+        item { SmartLockCard(store) }
 
-        item {
-            InsteadAppSection(store, apps)
-        }
+        item { InsteadAppCard(store, apps) }
+
+        item { CalibrateCard(store) }
 
         item {
             Text(
-                "Shake sensitivity",
+                "Apps to block",
                 style = MaterialTheme.typography.titleMedium,
-                modifier = Modifier.padding(start = 16.dp, top = 16.dp, end = 16.dp),
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.padding(start = 20.dp, top = 20.dp, end = 20.dp),
             )
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp),
-            ) {
-                SENSITIVITIES.forEach { (name, g) ->
-                    FilterChip(
-                        selected = threshold == g,
-                        onClick = {
-                            threshold = g
-                            store.shakeThreshold = g
-                        },
-                        label = { Text("$name (${g}g)") },
-                    )
-                }
-            }
-            ShakeTester(threshold)
-        }
-
-        item {
-            StatusCard(diag)
-        }
-
-        item {
             Text(
-                "Apps to block (${blocked.size} selected)",
-                style = MaterialTheme.typography.titleMedium,
-                modifier = Modifier.padding(start = 16.dp, top = 16.dp, end = 16.dp, bottom = 8.dp),
+                "${blocked.size} selected",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(start = 20.dp, bottom = 8.dp),
             )
             OutlinedTextField(
                 value = query,
                 onValueChange = { query = it },
                 placeholder = { Text("Search apps") },
                 singleLine = true,
+                shape = MaterialTheme.shapes.medium,
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
             )
             Spacer(Modifier.height(8.dp))
         }
 
-        val list = apps
+        val list = sortedApps
         if (list == null) {
             item {
                 Box(Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
@@ -325,95 +261,165 @@ private fun SetupScreen(store: LockStore, serviceEnabled: Boolean, batteryUnrest
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier
                         .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 2.dp)
+                        .clip(MaterialTheme.shapes.small)
+                        .background(if (checked) MaterialTheme.colorScheme.primaryContainer else Color.Transparent)
                         .clickable(onClick = toggle)
-                        .padding(horizontal = 16.dp, vertical = 6.dp),
+                        .padding(horizontal = 8.dp, vertical = 6.dp),
                 ) {
                     Image(app.icon, contentDescription = null, modifier = Modifier.size(40.dp))
-                    Spacer(Modifier.width(16.dp))
-                    Text(app.label, modifier = Modifier.weight(1f))
+                    Spacer(Modifier.width(14.dp))
+                    Text(
+                        app.label,
+                        fontWeight = if (checked) FontWeight.SemiBold else FontWeight.Normal,
+                        modifier = Modifier.weight(1f),
+                    )
                     Checkbox(checked = checked, onCheckedChange = { toggle() })
                 }
             }
+            item { Spacer(Modifier.height(24.dp)) }
         }
     }
 }
 
-private fun loadApps(context: Context): List<AppEntry> {
-    val pm = context.packageManager
-    val launcherIntent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
-    return pm.queryIntentActivities(launcherIntent, 0)
-        .distinctBy { it.activityInfo.packageName }
-        .filter { it.activityInfo.packageName != context.packageName }
-        .map {
-            AppEntry(
-                packageName = it.activityInfo.packageName,
-                label = it.loadLabel(pm).toString(),
-                icon = it.loadIcon(pm).toBitmap(96, 96).asImageBitmap(),
-            )
-        }
-        .sortedBy { it.label.lowercase() }
-}
-
-/** Try a shake right here, with the same detector the service uses. */
+/** Big status card: ready / locked / off, the blocked apps and today's numbers. */
 @Composable
-private fun ShakeTester(threshold: Float) {
-    val context = LocalContext.current
-    var currentThreshold by remember { mutableFloatStateOf(threshold) }
-    currentThreshold = threshold
-    var peak by remember { mutableFloatStateOf(1f) }
-    var detected by remember { mutableIntStateOf(0) }
-    var lastShakeG by remember { mutableFloatStateOf(0f) }
-
-    DisposableEffect(Unit) {
-        val sm = context.getSystemService(SensorManager::class.java)
-        val detector = ShakeDetector({ currentThreshold }) { peakG ->
-            detected++
-            lastShakeG = peakG
+private fun HeroCard(
+    store: LockStore,
+    stats: StatsLog,
+    serviceEnabled: Boolean,
+    scope: LockScope,
+    minutes: Int,
+    blocked: Set<String>,
+    apps: List<AppEntry>?,
+) {
+    val remaining by produceState(store.remainingMillis()) {
+        while (true) {
+            value = store.remainingMillis()
+            delay(1000)
         }
-        val listener = object : SensorEventListener {
-            override fun onSensorChanged(event: SensorEvent) {
-                peak = maxOf(peak, detector.onSensorChanged(event))
-            }
-            override fun onAccuracyChanged(sensor: Sensor, accuracy: Int) = Unit
-        }
-        sm.registerListener(listener, sm.getDefaultSensor(Sensor.TYPE_ACCELEROMETER), SensorManager.SENSOR_DELAY_GAME)
-        onDispose { sm.unregisterListener(listener) }
     }
+    val today by produceState(0 to 0L) {
+        value = withContext(Dispatchers.IO) {
+            val events = stats.read(startOfDay(System.currentTimeMillis()))
+            val escapes = events.count { it is LockEvent && it.trigger == Trigger.SHAKE }
+            val useMs = events.filterIsInstance<UseEvent>().sumOf { it.until - it.at }
+            escapes to useMs
+        }
+    }
+    val white = Color.White
+    val muted = Color.White.copy(alpha = 0.75f)
 
-    Card(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
-        Column(Modifier.padding(16.dp)) {
-            Text("Test it here", fontWeight = FontWeight.Bold)
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .padding(16.dp)
+            .clip(MaterialTheme.shapes.large)
+            .background(HeroGradient)
+            .padding(22.dp)
+    ) {
+        Column {
+            val (status, title, subtitle) = when {
+                !serviceEnabled -> Triple("OFF", "Not running yet", "Turn on the accessibility service below.")
+                remaining > 0 -> Triple(
+                    "LOCKED",
+                    formatRemaining(remaining),
+                    if (store.activeLock == LockScope.PHONE) "Your whole phone is locked." else "Your blocked apps are locked.",
+                )
+                blocked.isEmpty() -> Triple("ALMOST", "Pick your apps", "Tick the apps you doomscroll in, at the bottom.")
+                else -> Triple(
+                    "READY",
+                    "Shake to escape",
+                    "Shake while in one of these to lock " +
+                        (if (scope == LockScope.PHONE) "your phone" else "them") + " for $minutes min.",
+                )
+            }
+            Text(status, color = if (status == "LOCKED") Coral else muted, fontWeight = FontWeight.Bold, letterSpacing = 2.sp, fontSize = 12.sp)
+            Spacer(Modifier.height(4.dp))
+            Text(title, color = white, fontSize = 32.sp, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(4.dp))
+            Text(subtitle, color = muted, style = MaterialTheme.typography.bodyMedium)
+
+            val icons = apps?.filter { it.packageName in blocked }.orEmpty()
+            if (icons.isNotEmpty()) {
+                Spacer(Modifier.height(14.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy((-8).dp), verticalAlignment = Alignment.CenterVertically) {
+                    icons.take(6).forEach {
+                        Image(
+                            it.icon,
+                            contentDescription = it.label,
+                            modifier = Modifier.size(34.dp).clip(CircleShape).border(2.dp, white, CircleShape).background(white),
+                        )
+                    }
+                    if (icons.size > 6) {
+                        Text("  +${icons.size - 6}", color = muted, fontWeight = FontWeight.SemiBold)
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(16.dp))
+            HorizontalDivider(color = white.copy(alpha = 0.2f))
+            Spacer(Modifier.height(12.dp))
+            val (escapes, useMs) = today
             Text(
-                "Strongest shake: %.1fg (needs %.1fg, 3 times)".format(peak, threshold),
-                style = MaterialTheme.typography.bodyMedium,
+                "Today: $escapes ${if (escapes == 1) "escape" else "escapes"} · ${formatDuration(useMs)} in blocked apps",
+                color = muted,
+                style = MaterialTheme.typography.bodySmall,
             )
-            Text(
-                if (detected > 0) "Shake detected! ($detected) · %.1fg".format(lastShakeG) else "No shake detected yet",
-                color = if (detected > 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                fontWeight = FontWeight.Bold,
-            )
-            Button(onClick = { peak = 1f; detected = 0 }, modifier = Modifier.padding(top = 8.dp)) { Text("Reset") }
         }
     }
 }
 
-/** What the background service last saw - check this after shaking inside a blocked app. */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun StatusCard(diag: Diagnostics.State) {
-    Card(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
-        Column(Modifier.padding(16.dp)) {
-            Text("Service status", fontWeight = FontWeight.Bold)
-            val lines = listOf(
-                "Service running" to if (diag.serviceRunning) "yes" else "NO - turn it on in accessibility settings",
-                "Last app seen" to (diag.lastApp ?: "none yet"),
-                "Last blocked app opened" to (diag.lastBlockedApp ?: "none yet"),
-                "Sensor readings in blocked app" to diag.sensorEvents.toString(),
-                "Strongest shake in blocked app" to "%.1fg".format(diag.peakG),
-                "Locks triggered" to diag.shakes.toString(),
-            )
-            lines.forEach { (k, v) ->
-                Text("$k: $v", style = MaterialTheme.typography.bodyMedium)
+private fun LockScopeSelector(scope: LockScope, onSelect: (LockScope) -> Unit) {
+    val options = listOf(LockScope.APPS to "Lock the apps", LockScope.PHONE to "Lock the phone")
+    SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+        options.forEachIndexed { index, (option, label) ->
+            SegmentedButton(
+                selected = scope == option,
+                onClick = { onSelect(option) },
+                shape = SegmentedButtonDefaults.itemShape(index, options.size),
+                colors = SegmentedButtonDefaults.colors(
+                    activeContainerColor = MaterialTheme.colorScheme.primaryContainer,
+                    activeContentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                ),
+            ) { Text(label) }
+        }
+    }
+}
+
+@Composable
+private fun SettingsCard(title: String, subtitle: String? = null, content: @Composable ColumnScope.() -> Unit) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+        shape = MaterialTheme.shapes.medium,
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
+    ) {
+        Column(Modifier.padding(18.dp)) {
+            Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            if (subtitle != null) {
+                Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
+            Spacer(Modifier.height(12.dp))
+            content()
+        }
+    }
+}
+
+@Composable
+private fun WarningCard(title: String, text: String, actions: @Composable ColumnScope.() -> Unit) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer),
+        shape = MaterialTheme.shapes.medium,
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
+    ) {
+        Column(Modifier.padding(18.dp)) {
+            Text(title, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onTertiaryContainer)
+            Spacer(Modifier.height(4.dp))
+            Text(text, color = MaterialTheme.colorScheme.onTertiaryContainer, style = MaterialTheme.typography.bodyMedium)
+            Spacer(Modifier.height(12.dp))
+            actions()
         }
     }
 }
@@ -423,36 +429,18 @@ private fun StatusCard(diag: Diagnostics.State) {
 private fun BatteryCard() {
     val context = LocalContext.current
     val appUri = Uri.parse("package:${context.packageName}")
-    Card(
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+    WarningCard(
+        "Let Shake Lock run in the background",
+        "Otherwise your phone freezes it and you can open blocked apps during a lock. " +
+            "On Xiaomi: App settings → Battery saver → No restrictions, and turn on Autostart.",
     ) {
-        Column(Modifier.padding(16.dp)) {
-            Text("Let Shake Lock run in the background", fontWeight = FontWeight.Bold)
-            Spacer(Modifier.height(4.dp))
-            Text(
-                "Otherwise your phone freezes it and you can open blocked apps during a lock. " +
-                    "On Xiaomi: App settings → Battery saver → No restrictions, and turn on Autostart."
-            )
-            Spacer(Modifier.height(12.dp))
-            Button(onClick = {
-                context.startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, appUri))
-            }) { Text("Allow background use") }
-            Button(
-                onClick = { context.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, appUri)) },
-                modifier = Modifier.padding(top = 4.dp),
-            ) { Text("Open app settings") }
-        }
+        Button(onClick = {
+            context.startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, appUri))
+        }) { Text("Allow background use") }
+        TextButton(onClick = {
+            context.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, appUri))
+        }) { Text("Open app settings") }
     }
-}
-
-@Composable
-private fun SectionTitle(text: String) {
-    Text(
-        text,
-        style = MaterialTheme.typography.titleMedium,
-        modifier = Modifier.padding(start = 16.dp, top = 16.dp, end = 16.dp),
-    )
 }
 
 @Composable
@@ -461,8 +449,9 @@ private fun SwitchRow(title: String, description: String, checked: Boolean, onCh
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
             .fillMaxWidth()
+            .clip(MaterialTheme.shapes.small)
             .clickable { onChange(!checked) }
-            .padding(horizontal = 16.dp, vertical = 8.dp),
+            .padding(vertical = 8.dp),
     ) {
         Column(Modifier.weight(1f)) {
             Text(title, fontWeight = FontWeight.Medium)
@@ -477,7 +466,7 @@ private fun SwitchRow(title: String, description: String, checked: Boolean, onCh
 private fun MinuteChips(options: List<Int>, selected: Int, onSelect: (Int) -> Unit) {
     Row(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
-        modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 4.dp),
+        modifier = Modifier.horizontalScroll(rememberScrollState()),
     ) {
         options.forEach { option ->
             FilterChip(selected = option == selected, onClick = { onSelect(option) }, label = { Text("$option min") })
@@ -487,7 +476,7 @@ private fun MinuteChips(options: List<Int>, selected: Int, onSelect: (Int) -> Un
 
 /** Experiments, each with its own switch so they can be tried one by one. */
 @Composable
-private fun SmartLockSection(store: LockStore) {
+private fun SmartLockCard(store: LockStore) {
     var escalate by remember { mutableStateOf(store.escalate) }
     var strength by remember { mutableStateOf(store.strengthScales) }
     var reentry by remember { mutableStateOf(store.reentryLimit) }
@@ -496,43 +485,44 @@ private fun SmartLockSection(store: LockStore) {
     var nudge by remember { mutableStateOf(store.nudge) }
     var nudgeMinutes by remember { mutableIntStateOf(store.nudgeMinutes) }
 
-    SectionTitle("Smart locks")
-    SwitchRow(
-        "Escalating locks",
-        "Every lock today doubles the time: 5 → 10 → 20 min (max 60, whole phone max 10).",
-        escalate,
-    ) { escalate = it; store.escalate = it }
-    SwitchRow(
-        "Harder shake = longer lock",
-        "Shake a bit harder for 2× the time, really hard for 3×. Try it in the tester below.",
-        strength,
-    ) { strength = it; store.strengthScales = it }
-    SwitchRow(
-        "Limited comeback",
-        "After a lock you get $reentryMinutes min in blocked apps, then it locks again (for the next hour).",
-        reentry,
-    ) { reentry = it; store.reentryLimit = it }
-    if (reentry) {
-        MinuteChips(listOf(3, 5, 10), reentryMinutes) { reentryMinutes = it; store.reentryMinutes = it }
-    }
-    SwitchRow(
-        "Unlock early, with friction",
-        "Lock screen gets an unlock button: wait 30 s, then type a sentence to get back in.",
-        early,
-    ) { early = it; store.earlyUnlock = it }
-    SwitchRow(
-        "Scroll nudge",
-        "A soft buzz every $nudgeMinutes min of scrolling, to remind you that you can shake out.",
-        nudge,
-    ) { nudge = it; store.nudge = it }
-    if (nudge) {
-        MinuteChips(listOf(10, 20, 30), nudgeMinutes) { nudgeMinutes = it; store.nudgeMinutes = it }
+    SettingsCard("Smart locks", "Optional extras, try them one by one.") {
+        SwitchRow(
+            "Escalating locks",
+            "Every lock today doubles the time: 5 → 10 → 20 min (max 60, whole phone max 10).",
+            escalate,
+        ) { escalate = it; store.escalate = it }
+        SwitchRow(
+            "Harder shake = longer lock",
+            "Shake a bit harder for 2× the time, really hard for 3×.",
+            strength,
+        ) { strength = it; store.strengthScales = it }
+        SwitchRow(
+            "Limited comeback",
+            "After a lock you get $reentryMinutes min in blocked apps, then it locks again (for the next hour).",
+            reentry,
+        ) { reentry = it; store.reentryLimit = it }
+        if (reentry) {
+            MinuteChips(listOf(3, 5, 10), reentryMinutes) { reentryMinutes = it; store.reentryMinutes = it }
+        }
+        SwitchRow(
+            "Unlock early, with friction",
+            "Lock screen gets an unlock button: wait 30 s, then type a sentence to get back in.",
+            early,
+        ) { early = it; store.earlyUnlock = it }
+        SwitchRow(
+            "Scroll nudge",
+            "A soft buzz every $nudgeMinutes min of scrolling, as a reminder that you can shake out.",
+            nudge,
+        ) { nudge = it; store.nudge = it }
+        if (nudge) {
+            MinuteChips(listOf(10, 20, 30), nudgeMinutes) { nudgeMinutes = it; store.nudgeMinutes = it }
+        }
     }
 }
 
 /** The app the lock screen points you to instead, e.g. To-Dodo. */
 @Composable
-private fun InsteadAppSection(store: LockStore, apps: List<AppEntry>?) {
+private fun InsteadAppCard(store: LockStore, apps: List<AppEntry>?) {
     var instead by remember { mutableStateOf(store.insteadApp) }
     var picking by remember { mutableStateOf(false) }
 
@@ -546,24 +536,20 @@ private fun InsteadAppSection(store: LockStore, apps: List<AppEntry>?) {
         }
     }
 
-    SectionTitle("Do this instead")
-    Text(
-        "The lock screen gets a button for this app, and it stays usable during a whole-phone lock.",
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.padding(horizontal = 16.dp),
-    )
-    val chosen = apps?.firstOrNull { it.packageName == instead }
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
-    ) {
-        if (chosen != null) {
-            Image(chosen.icon, contentDescription = null, modifier = Modifier.size(36.dp))
-            Spacer(Modifier.width(12.dp))
+    SettingsCard("Do this instead", "Gets a button on the lock screen and always stays usable.") {
+        val chosen = apps?.firstOrNull { it.packageName == instead }
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+            if (chosen != null) {
+                Image(chosen.icon, contentDescription = null, modifier = Modifier.size(40.dp))
+                Spacer(Modifier.width(12.dp))
+            }
+            Text(
+                chosen?.label ?: "Nothing chosen",
+                fontWeight = FontWeight.Medium,
+                modifier = Modifier.weight(1f),
+            )
+            FilledTonalButton(onClick = { picking = true }, enabled = apps != null) { Text("Change") }
         }
-        Text(chosen?.label ?: "Nothing chosen", modifier = Modifier.weight(1f))
-        TextButton(onClick = { picking = true }, enabled = apps != null) { Text("Change") }
     }
 
     if (picking && apps != null) {
@@ -607,4 +593,134 @@ private fun InsteadAppSection(store: LockStore, apps: List<AppEntry>?) {
             },
         )
     }
+}
+
+/** Sensitivity, a live shake tester and service diagnostics - folded away by default. */
+@Composable
+private fun CalibrateCard(store: LockStore) {
+    var open by rememberSaveable { mutableStateOf(false) }
+    var threshold by remember { mutableFloatStateOf(store.shakeThreshold) }
+    val diag by Diagnostics.state.collectAsState()
+
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+        shape = MaterialTheme.shapes.medium,
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
+    ) {
+        Column(Modifier.padding(18.dp)) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth().clickable { open = !open },
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("Shake sensitivity", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        SENSITIVITIES.firstOrNull { it.second == threshold }?.first ?: "Custom",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Text(if (open) "▴" else "▾", fontSize = 20.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            if (open) {
+                Spacer(Modifier.height(12.dp))
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.horizontalScroll(rememberScrollState()),
+                ) {
+                    SENSITIVITIES.forEach { (name, g) ->
+                        FilterChip(
+                            selected = threshold == g,
+                            onClick = {
+                                threshold = g
+                                store.shakeThreshold = g
+                            },
+                            label = { Text("$name (${g}g)") },
+                        )
+                    }
+                }
+                Spacer(Modifier.height(12.dp))
+                ShakeTester(threshold)
+                Spacer(Modifier.height(16.dp))
+                Text("Service status", fontWeight = FontWeight.SemiBold)
+                listOf(
+                    "Running" to if (diag.serviceRunning) "yes" else "no",
+                    "Last app seen" to (diag.lastApp ?: "–"),
+                    "Last blocked app" to (diag.lastBlockedApp ?: "–"),
+                    "Sensor readings" to diag.sensorEvents.toString(),
+                    "Strongest shake" to "%.1fg".format(diag.peakG),
+                    "Locks this run" to diag.shakes.toString(),
+                ).forEach { (k, v) ->
+                    Row(Modifier.fillMaxWidth()) {
+                        Text(k, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
+                        Text(v, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** Try a shake right here, with the same detector the service uses. */
+@Composable
+private fun ShakeTester(threshold: Float) {
+    val context = LocalContext.current
+    var currentThreshold by remember { mutableFloatStateOf(threshold) }
+    currentThreshold = threshold
+    var peak by remember { mutableFloatStateOf(1f) }
+    var detected by remember { mutableIntStateOf(0) }
+    var lastShakeG by remember { mutableFloatStateOf(0f) }
+
+    DisposableEffect(Unit) {
+        val sm = context.getSystemService(SensorManager::class.java)
+        val detector = ShakeDetector({ currentThreshold }) { peakG ->
+            detected++
+            lastShakeG = peakG
+        }
+        val listener = object : SensorEventListener {
+            override fun onSensorChanged(event: SensorEvent) {
+                peak = maxOf(peak, detector.onSensorChanged(event))
+            }
+            override fun onAccuracyChanged(sensor: Sensor, accuracy: Int) = Unit
+        }
+        sm.registerListener(listener, sm.getDefaultSensor(Sensor.TYPE_ACCELEROMETER), SensorManager.SENSOR_DELAY_GAME)
+        onDispose { sm.unregisterListener(listener) }
+    }
+
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .clip(MaterialTheme.shapes.small)
+            .background(if (detected > 0) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh)
+            .padding(14.dp)
+    ) {
+        Column {
+            Text(
+                if (detected > 0) "Shake detected! ($detected) · %.1fg".format(lastShakeG) else "Shake the phone to test",
+                fontWeight = FontWeight.SemiBold,
+            )
+            Text(
+                "Strongest: %.1fg · needs %.1fg, 3 times".format(peak, threshold),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            TextButton(onClick = { peak = 1f; detected = 0 }) { Text("Reset") }
+        }
+    }
+}
+
+private fun loadApps(context: Context): List<AppEntry> {
+    val pm = context.packageManager
+    val launcherIntent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+    return pm.queryIntentActivities(launcherIntent, 0)
+        .distinctBy { it.activityInfo.packageName }
+        .filter { it.activityInfo.packageName != context.packageName }
+        .map {
+            AppEntry(
+                packageName = it.activityInfo.packageName,
+                label = it.loadLabel(pm).toString(),
+                icon = it.loadIcon(pm).toBitmap(96, 96).asImageBitmap(),
+            )
+        }
+        .sortedBy { it.label.lowercase() }
 }

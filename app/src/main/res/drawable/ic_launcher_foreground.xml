@@ -1,19 +1,35 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Padlock centred in the 72dp safe zone of a 108dp adaptive icon -->
+<!-- Padlock with "shake" lines either side, centred in the 72dp safe zone of a 108dp adaptive icon -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
+    <!-- shackle -->
     <path
         android:fillColor="#00000000"
-        android:pathData="M44,50 L44,42 A10,10 0 0,1 64,42 L64,50"
+        android:pathData="M45,50 L45,43 A9,9 0 0,1 63,43 L63,50"
         android:strokeWidth="5"
         android:strokeColor="#FFFFFF" />
+    <!-- body -->
     <path
         android:fillColor="#FFFFFF"
-        android:pathData="M38,50 L70,50 Q73,50 73,53 L73,73 Q73,76 70,76 L38,76 Q35,76 35,73 L35,53 Q35,50 38,50 Z" />
+        android:pathData="M40,50 L68,50 Q71,50 71,53 L71,71 Q71,74 68,74 L40,74 Q37,74 37,71 L37,53 Q37,50 40,50 Z" />
+    <!-- keyhole -->
     <path
-        android:fillColor="#3F51B5"
-        android:pathData="M54,58 A4,4 0 1,1 53.99,58 Z M52,62 L56,62 L56,69 L52,69 Z" />
+        android:fillColor="#4B47D6"
+        android:pathData="M54,57 A3.5,3.5 0 1,1 53.99,57 Z M52.3,60 L55.7,60 L55.7,67 L52.3,67 Z" />
+    <!-- shake lines -->
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M30,52 Q27,60 30,68 M24,48 Q19,60 24,72"
+        android:strokeWidth="3"
+        android:strokeLineCap="round"
+        android:strokeColor="#FF8A6B" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M78,52 Q81,60 78,68 M84,48 Q89,60 84,72"
+        android:strokeWidth="3"
+        android:strokeLineCap="round"
+        android:strokeColor="#FF8A6B" />
 </vector>

@@ -57,6 +57,8 @@ class LockStore(context: Context) {
 
     val lockedUntil get() = prefs.getLong(KEY_UNTIL, 0L)
 
+    val lockedAt get() = prefs.getLong(KEY_LOCKED_AT, 0L)
+
     /** What the current (or last) lock covers. */
     val activeLock get() = LockScope.valueOf(prefs.getString(KEY_ACTIVE, LockScope.APPS.name)!!)
 
@@ -74,8 +76,10 @@ class LockStore(context: Context) {
     fun remainingMillis() = (lockedUntil - System.currentTimeMillis()).coerceAtLeast(0)
 
     fun startLock(scope: LockScope, minutes: Int, pkg: String, sessionMs: Long, trigger: Trigger) = prefs.edit {
+        val now = System.currentTimeMillis()
         putString(KEY_ACTIVE, scope.name)
-        putLong(KEY_UNTIL, System.currentTimeMillis() + minutes * 60_000L)
+        putLong(KEY_LOCKED_AT, now)
+        putLong(KEY_UNTIL, now + minutes * 60_000L)
         putString(KEY_LAST_PKG, pkg)
         putLong(KEY_LAST_SESSION, sessionMs)
         putString(KEY_LAST_TRIGGER, trigger.name)
@@ -100,6 +104,7 @@ class LockStore(context: Context) {
         const val KEY_INSTEAD = "instead_app"
         const val KEY_INSTEAD_CHOSEN = "instead_app_chosen"
         const val KEY_UNTIL = "locked_until"
+        const val KEY_LOCKED_AT = "locked_at"
         const val KEY_ACTIVE = "active_lock"
         const val KEY_LAST_PKG = "last_lock_pkg"
         const val KEY_LAST_SESSION = "last_session_ms"

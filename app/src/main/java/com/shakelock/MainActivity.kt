@@ -438,6 +438,7 @@ private fun WarningCard(title: String, text: String, actions: @Composable Column
 private fun SetupChecklist(setup: SetupState, store: LockStore, onChanged: () -> Unit) {
     val context = LocalContext.current
     val restrictedHint = "Tap ⋮ (top right) → Allow restricted settings"
+    val brand = Setup.brandBattery
     WarningCard("Set up Airlock", "Three quick steps, then shake whenever you catch yourself scrolling.") {
         SetupStep(
             mark = if (setup.lockChosen) "✓" else "1",
@@ -487,17 +488,17 @@ private fun SetupChecklist(setup: SetupState, store: LockStore, onChanged: () ->
             mark = if (setup.batteryUnrestricted) "✓" else "3",
             title = "Keep it running",
             text = when {
-                setup.batteryUnrestricted && Setup.isXiaomi -> "Xiaomi also needs: App info → Battery saver → No restrictions, and Autostart on."
+                brand != null && setup.batteryUnrestricted -> "${brand.brand} also needs: App info → ${brand.path}."
                 setup.batteryUnrestricted -> "Done."
-                Setup.isXiaomi -> "Allow it, then in App info set Battery saver → No restrictions and turn on Autostart. Otherwise Xiaomi freezes Airlock."
+                brand != null -> "Allow it, then in App info: ${brand.path}. Otherwise ${brand.brand} freezes Airlock."
                 else -> "Lets Airlock keep running in the background."
             },
             action = if (setup.batteryUnrestricted) null else "Allow",
         ) { Setup.requestBattery(context) }
-        if (Setup.isXiaomi) {
-            TextButton(onClick = {
-                Setup.openAppInfo(context, "Battery saver → No restrictions", "And turn on Autostart.")
-            }) { Text("Open Xiaomi battery settings") }
+        if (brand != null) {
+            TextButton(onClick = { Setup.openAppInfo(context, brand.path, brand.detail) }) {
+                Text("Open ${brand.brand} battery settings")
+            }
         }
     }
 }
@@ -516,17 +517,17 @@ private fun LockTimePicker(onPick: (Int) -> Unit) {
                 modifier = Modifier
                     .weight(1f)
                     .clip(MaterialTheme.shapes.small)
-                    .background(if (recommended) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceContainerHighest)
+                    .background(MaterialTheme.colorScheme.surfaceContainerHighest)
                     .clickable { onPick(minutes) }
                     .padding(vertical = 10.dp),
             ) {
                 Text(
                     "$minutes min",
                     fontWeight = FontWeight.Bold,
-                    color = if (recommended) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
+                    color = MaterialTheme.colorScheme.onSurface,
                 )
                 if (tag != null) {
-                    Text(tag, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onPrimary)
+                    Text(tag, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
                 }
             }
         }

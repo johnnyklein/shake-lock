@@ -19,7 +19,6 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -38,6 +37,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Settings
@@ -45,6 +45,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -122,7 +123,7 @@ private enum class Step { WELCOME, APPS, TIME, BUBBLE, ACCESSIBILITY, BATTERY, D
 private fun Step.satisfied(state: OnboardingState) = when (this) {
     Step.BUBBLE -> state.canShowBubble
     Step.ACCESSIBILITY -> state.serviceEnabled
-    Step.BATTERY -> state.batteryUnrestricted && !Setup.isXiaomi // Xiaomi always gets its extra hints
+    Step.BATTERY -> state.batteryUnrestricted && Setup.brandBattery == null // brands with extra steps always see them
     else -> false
 }
 
@@ -146,10 +147,20 @@ private fun Onboarding(store: LockStore, state: OnboardingState, onFinish: () ->
 
     Scaffold(containerColor = MaterialTheme.colorScheme.background) { padding ->
         Column(Modifier.padding(padding).fillMaxSize().padding(horizontal = 24.dp, vertical = 12.dp)) {
-            LinearProgressIndicator(
-                progress = { step.ordinal / Step.entries.lastIndex.toFloat() },
-                modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(4.dp)),
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (step != Step.WELCOME) {
+                    IconButton(onClick = { go(-1) }, modifier = Modifier.padding(start = 0.dp)) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                    }
+                } else {
+                    Spacer(Modifier.size(48.dp))
+                }
+                LinearProgressIndicator(
+                    progress = { step.ordinal / Step.entries.lastIndex.toFloat() },
+                    modifier = Modifier.weight(1f).clip(RoundedCornerShape(4.dp)),
+                )
+                Spacer(Modifier.size(48.dp))
+            }
             AnimatedContent(
                 targetState = step,
                 transitionSpec = {
@@ -210,21 +221,22 @@ private fun Onboarding(store: LockStore, state: OnboardingState, onFinish: () ->
                     }
                     Step.BATTERY -> {
                         val context = LocalContext.current
+                        val brand = Setup.brandBattery
                         Page(
                             title = "Keep it running",
-                            text = if (Setup.isXiaomi) {
-                                "Xiaomi freezes apps in the background, then shaking does nothing. " +
-                                    "Allow Airlock to run, then in App info set Battery saver → No restrictions and turn on Autostart."
+                            text = if (brand != null) {
+                                "${brand.brand} phones freeze apps in the background, then shaking does nothing. " +
+                                    "Allow Airlock to run, then in App info: ${brand.path}." + (brand.detail?.let { " $it" } ?: "")
                             } else {
                                 "Let Airlock run in the background, so it's there when you shake."
                             },
                             illustration = { StepIcon(Icons.Filled.Settings) },
-                            primary = if (state.batteryUnrestricted && Setup.isXiaomi) {
-                                "Open App info" to { Setup.openAppInfo(context, "Battery saver → No restrictions", "And turn on Autostart.") }
+                            primary = if (state.batteryUnrestricted && brand != null) {
+                                "Open App info" to { Setup.openAppInfo(context, brand.path, brand.detail) }
                             } else {
                                 "Allow" to { Setup.requestBattery(context) }
                             },
-                            secondary = (if (Setup.isXiaomi) "Next" else "Skip") to { go(+1) },
+                            secondary = (if (brand != null) "Next" else "Skip") to { go(+1) },
                         )
                     }
                     Step.DONE -> {
@@ -360,8 +372,8 @@ private fun TimePage(onPick: (Int) -> Unit) {
                     .fillMaxWidth()
                     .padding(vertical = 6.dp)
                     .clip(MaterialTheme.shapes.medium)
-                    .background(if (recommended) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerLow)
-                    .then(if (recommended) Modifier.border(2.dp, MaterialTheme.colorScheme.primary, MaterialTheme.shapes.medium) else Modifier)
+                    // All three look the same: nothing should look pre-selected; the label does the recommending.
+                    .background(MaterialTheme.colorScheme.surfaceContainerHigh)
                     .clickable { onPick(minutes) }
                     .padding(horizontal = 20.dp, vertical = 18.dp),
             ) {

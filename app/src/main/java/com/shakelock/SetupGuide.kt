@@ -21,7 +21,18 @@ import android.widget.TextView
 
 /** Everything needed to get Airlock set up, and shortcuts straight to the right settings pages. */
 object Setup {
-    val isXiaomi = Build.MANUFACTURER.lowercase() in setOf("xiaomi", "redmi", "poco")
+    /** Extra battery step for brands that freeze background apps on top of stock Android. */
+    class BrandBattery(val brand: String, val path: String, val detail: String?)
+
+    /** Null on Pixel and other phones close to stock Android. Menu names vary a bit per version. */
+    val brandBattery: BrandBattery? = when (Build.MANUFACTURER.lowercase()) {
+        "xiaomi", "redmi", "poco" -> BrandBattery("Xiaomi", "Battery saver → No restrictions", "And turn on Autostart.")
+        "samsung" -> BrandBattery("Samsung", "Battery → Unrestricted", null)
+        "oneplus", "oppo", "realme" -> BrandBattery(Build.MANUFACTURER.replaceFirstChar { it.uppercase() }, "Battery usage → Allow background activity", "And allow auto launch.")
+        "huawei", "honor" -> BrandBattery(Build.MANUFACTURER.replaceFirstChar { it.uppercase() }, "Battery → App launch → Manage manually", "Turn everything on.")
+        "vivo", "iqoo" -> BrandBattery("Vivo", "Battery → Allow high background power use", null)
+        else -> null
+    }
 
     fun serviceEnabled(context: Context): Boolean {
         val enabled = Settings.Secure.getString(context.contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES) ?: return false

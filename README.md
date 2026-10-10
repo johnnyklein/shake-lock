@@ -22,9 +22,11 @@ Needs the Android SDK and a JDK (Android Studio's bundled one works):
 
 ```powershell
 $env:JAVA_HOME = "C:\Program Files\Android\Android Studio1\jbr"
-.\gradlew.bat assembleDebug
-adb install -r app\build\outputs\apk\debug\app-debug.apk
+.\gradlew.bat assembleRelease
+adb install -r app\build\outputs\apk\release\app-release.apk
 ```
+
+Release builds aren't debuggable but are signed with the same key as debug builds (`~/.android/debug.keystore`), so they install over each other. **Back up that keystore**: without it, existing installs can't be updated.
 
 Then in the app: pick the apps to block and turn on the Shake Lock accessibility service.
 
@@ -35,7 +37,7 @@ Then in the app: pick the apps to block and turn on the Shake Lock accessibility
 
 Without it everything else works; the Friends tab just says there's no server.
 
-1. Create a Supabase project, run [`supabase/001-friends-and-nukes.sql`](supabase/001-friends-and-nukes.sql) in the SQL editor.
+1. Create a Supabase project, run the files in [`supabase/`](supabase/) in order (001, 002, 003) in the SQL editor.
 2. Authentication → Sign In / Providers → enable **anonymous sign-ins**.
 3. Add to `local.properties` (not committed):
    ```

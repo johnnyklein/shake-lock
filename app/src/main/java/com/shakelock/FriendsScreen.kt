@@ -1,6 +1,7 @@
 package com.shakelock
 
 import android.content.Intent
+import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -54,7 +55,9 @@ import java.util.Date
 import java.util.Locale
 
 private const val NUKES_PER_DAY = 3
-private const val DAY_MS = 24 * 3_600_000L
+// Easter egg: tap an empty nuke button this often within this window for one secret extra nuke.
+private const val SECRET_TAPS = 5
+private const val SECRET_WINDOW_MS = 10_000L
 
 @Composable
 fun FriendsScreen(store: LockStore) {
@@ -153,8 +156,12 @@ private fun FriendsList(store: LockStore) {
     }
 
     val names = (friends.orEmpty() + listOfNotNull(me)).associate { it.id to it.name }
-    fun nukesLeft(friendId: String) =
-        NUKES_PER_DAY - recent.count { it.sender == me?.id && it.target == friendId && System.currentTimeMillis() - it.createdAtMillis < DAY_MS }
+    // Resets at midnight; the secret bonus nuke doesn't count.
+    fun nukesLeft(friendId: String): Int {
+        val today = startOfDay(System.currentTimeMillis())
+        return NUKES_PER_DAY - recent.count { it.sender == me?.id && it.target == friendId && !it.bonus && it.createdAtMillis >= today }
+    }
+    val emptyTaps = remember { mutableMapOf<String, MutableList<Long>>() }
 
     LazyColumn(Modifier.fillMaxSize()) {
         item {
@@ -248,16 +255,38 @@ private fun FriendsList(store: LockStore) {
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
+                        fun openLaunch(bonus: Boolean) = context.startActivity(
+                            Intent(context, NukeLaunchActivity::class.java)
+                                .putExtra(NukeLaunchActivity.EXTRA_TARGET_ID, friend.id)
+                                .putExtra(NukeLaunchActivity.EXTRA_TARGET_NAME, friend.name)
+                                .putExtra(NukeLaunchActivity.EXTRA_BONUS, bonus)
+                        )
                         Button(
-                            enabled = left > 0,
                             onClick = {
-                                context.startActivity(
-                                    Intent(context, NukeLaunchActivity::class.java)
-                                        .putExtra(NukeLaunchActivity.EXTRA_TARGET_ID, friend.id)
-                                        .putExtra(NukeLaunchActivity.EXTRA_TARGET_NAME, friend.name)
+                                if (left > 0) {
+                                    openLaunch(bonus = false)
+                                } else {
+                                    // Out of nukes... unless you hammer the button.
+                                    val now = System.currentTimeMillis()
+                                    val taps = emptyTaps.getOrPut(friend.id) { mutableListOf() }
+                                    taps.removeAll { now - it > SECRET_WINDOW_MS }
+                                    taps += now
+                                    if (taps.size >= SECRET_TAPS) {
+                                        taps.clear()
+                                        openLaunch(bonus = true)
+                                    } else if (taps.size == 1) {
+                                        Toast.makeText(context, "No nukes left for today", Toast.LENGTH_SHORT).show()
+                                    }
+                                }
+                            },
+                            colors = if (left > 0) {
+                                ButtonDefaults.buttonColors(containerColor = Coral, contentColor = Color(0xFF3B0A00))
+                            } else {
+                                ButtonDefaults.buttonColors(
+                                    containerColor = MaterialTheme.colorScheme.surfaceContainerHighest,
+                                    contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                             },
-                            colors = ButtonDefaults.buttonColors(containerColor = Coral, contentColor = Color(0xFF3B0A00)),
                         ) { Text("💥 Nuke", fontWeight = FontWeight.Bold) }
                     }
                 }

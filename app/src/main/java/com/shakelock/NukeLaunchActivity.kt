@@ -73,9 +73,10 @@ class NukeLaunchActivity : ComponentActivity() {
         )
         val targetId = intent.getStringExtra(EXTRA_TARGET_ID) ?: return finish()
         val targetName = intent.getStringExtra(EXTRA_TARGET_NAME) ?: "your friend"
+        val bonus = intent.getBooleanExtra(EXTRA_BONUS, false)
         setContent {
             ShakeLockTheme {
-                LaunchScreen(targetId, targetName, onClose = ::finish)
+                LaunchScreen(targetId, targetName, bonus, onClose = ::finish)
             }
         }
     }
@@ -83,13 +84,14 @@ class NukeLaunchActivity : ComponentActivity() {
     companion object {
         const val EXTRA_TARGET_ID = "target_id"
         const val EXTRA_TARGET_NAME = "target_name"
+        const val EXTRA_BONUS = "bonus"
     }
 }
 
 private enum class Stage { READY, LIFTOFF, WAITING, HIT, MISSED, NO_ANSWER, FAILED }
 
 @Composable
-private fun LaunchScreen(targetId: String, targetName: String, onClose: () -> Unit) {
+private fun LaunchScreen(targetId: String, targetName: String, bonus: Boolean, onClose: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var stage by remember { mutableStateOf(Stage.READY) }
@@ -104,7 +106,7 @@ private fun LaunchScreen(targetId: String, targetName: String, onClose: () -> Un
         rumble(context, durationSteps = 30, strength = 0.6f)
         scope.launch {
             val sendTime = System.currentTimeMillis()
-            val sent = runCatching { Cloud.sendNuke(targetId) }
+            val sent = runCatching { Cloud.sendNuke(targetId, bonus) }
             liftoff.animateTo(1f, tween(LIFTOFF_MS, easing = LinearEasing))
             val nuke = sent.getOrElse {
                 message = it.message?.lineSequence()?.firstOrNull() ?: "Didn't launch"
@@ -153,7 +155,7 @@ private fun LaunchScreen(targetId: String, targetName: String, onClose: () -> Un
             Text(targetName, color = Color.White, fontSize = 34.sp, fontWeight = FontWeight.Black, textAlign = TextAlign.Center)
             Spacer(Modifier.height(8.dp))
             val (headline, sub) = when (stage) {
-                Stage.READY -> null to "Only hits if they're scrolling right now."
+                Stage.READY -> (if (bonus) "🎁 Secret nuke unlocked" else null) to "Only hits if they're scrolling right now."
                 Stage.LIFTOFF, Stage.WAITING -> "🚀 Missile away…" to null
                 Stage.HIT -> (if (countdown == 0) "💥 BOOM" else "Direct hit! Impact in ${countdown ?: 4}…") to
                     "They were scrolling. Not anymore."

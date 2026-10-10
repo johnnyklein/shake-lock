@@ -13,6 +13,7 @@ import android.hardware.SensorManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.PowerManager
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
@@ -96,6 +97,8 @@ class LockService : AccessibilityService(), SensorEventListener {
         Diagnostics.update { it.copy(serviceRunning = true) }
         Cloud.inboxStarter = ::startNukes
         startNukes()
+        // We may have been (re)started while an app is already open: look now, not at the next app switch.
+        scheduleCheck()
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent) = scheduleCheck()
@@ -108,7 +111,14 @@ class LockService : AccessibilityService(), SensorEventListener {
     }
 
     private fun onForegroundMaybeChanged() {
-        if (getSystemService(KeyguardManager::class.java).isKeyguardLocked) return
+        if (getSystemService(KeyguardManager::class.java).isKeyguardLocked) {
+            // Unlock (face/fingerprint) can still be animating. Scrolling fires no events,
+            // so keep checking while the screen is on instead of losing track of the app.
+            if (getSystemService(PowerManager::class.java).isInteractive) {
+                handler.postDelayed(checkForeground, KEYGUARD_RETRY_MS)
+            }
+            return
+        }
         val pkg = foregroundPackage() ?: return
         if (pkg == currentPackage && !store.isLocked()) return
         val inBlockedApp = pkg in store.blockedApps
@@ -274,7 +284,15 @@ class LockService : AccessibilityService(), SensorEventListener {
     private fun onNukeArrived(nuke: Nuke) {
         if (nuke.id in handledNukes || nuke.id in pendingNukes || nuke.status != "armed") return
         Log.d(TAG, "incoming nuke ${nuke.id} from ${nuke.sender}")
+        // Don't trust what we last saw: look at what's on screen right now.
+        currentPackage = null
+        onForegroundMaybeChanged()
         if (!canBeHit()) {
+            Log.d(
+                TAG,
+                "nuke ${nuke.id} missed: accept=${store.acceptNukes} inBlockedApp=${segmentPkg != null} " +
+                    "foreground=$currentPackage locked=${store.isLocked()} charging=${chargingPkg != null} incoming=$nukeIncoming",
+            )
             miss(nuke)
             return
         }
@@ -437,6 +455,7 @@ class LockService : AccessibilityService(), SensorEventListener {
     private companion object {
         const val TAG = "ShakeLock"
         const val SETTLE_MS = 250L
+        const val KEYGUARD_RETRY_MS = 1_000L
         const val KICK_FALLBACK_MS = 800L
         const val TICK_MS = 10_000L
         const val SESSION_GAP_MS = 60_000L // away for longer than this = new session

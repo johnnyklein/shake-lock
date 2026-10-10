@@ -41,6 +41,8 @@ data class Nuke(
     val target: String,
     @SerialName("created_at") val createdAt: String,
     val status: String = "armed",
+    /** The secret extra nuke (5 taps on an empty nuke button). */
+    val bonus: Boolean = false,
 ) {
     val createdAtMillis get() = runCatching { OffsetDateTime.parse(createdAt).toInstant().toEpochMilli() }.getOrDefault(0L)
 }
@@ -96,9 +98,14 @@ object Cloud {
         client.postgrest.rpc("remove_friend", buildJsonObject { put("friend", friendId) })
     }
 
-    suspend fun sendNuke(targetId: String): Nuke {
+    /** Nukes reset at the sender's local midnight; [bonus] uses the secret extra one. */
+    suspend fun sendNuke(targetId: String, bonus: Boolean = false): Nuke {
         myId()
-        return client.postgrest.rpc("send_nuke", buildJsonObject { put("target_id", targetId) }).decodeAs()
+        return client.postgrest.rpc("send_nuke", buildJsonObject {
+            put("target_id", targetId)
+            put("day_start", Instant.ofEpochMilli(startOfDay(System.currentTimeMillis())).toString())
+            put("use_bonus", bonus)
+        }).decodeAs()
     }
 
     suspend fun nuke(id: Long): Nuke? = client.from("nukes").select { filter { eq("id", id) } }.decodeSingleOrNull()
@@ -117,7 +124,7 @@ object Cloud {
         myId()
         return client.from("nukes").select {
             order("created_at", Order.DESCENDING)
-            limit(20)
+            limit(50)
         }.decodeList()
     }
 

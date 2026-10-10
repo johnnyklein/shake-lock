@@ -28,6 +28,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -177,8 +179,16 @@ private fun LaunchScreen(targetId: String, targetName: String, bonus: Boolean, o
             }
             Spacer(Modifier.weight(1f))
             if (stage != Stage.LIFTOFF && stage != Stage.WAITING) {
-                TextButton(onClick = onClose) {
-                    Text(if (stage == Stage.READY) "Cancel" else "Done", color = Color.White.copy(alpha = 0.8f), fontSize = 16.sp)
+                if (stage == Stage.READY) {
+                    TextButton(onClick = onClose) {
+                        Text("Cancel", color = Color.White.copy(alpha = 0.8f), fontSize = 16.sp)
+                    }
+                } else {
+                    Button(
+                        onClick = onClose,
+                        colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Color(0xFF26236E)),
+                        modifier = Modifier.fillMaxWidth().height(52.dp),
+                    ) { Text("Done", fontSize = 16.sp, fontWeight = FontWeight.SemiBold) }
                 }
             }
         }
@@ -240,7 +250,7 @@ private fun Liftoff(t: Float, puffs: List<Puff>) {
         }
         drawMissile(tip, angle = 180f, p = t, flameScale = 0.4f + 0.6f * ignition + flight)
         drawComicCloud(placed, alpha = smoke.coerceAtMost(1f) * (1 - clear))
-        // Launch pad
-        drawCircle(Color.White.copy(alpha = 0.15f), 60.dp.toPx(), pad.copy(y = pad.y + 30.dp.toPx()), style = Stroke(4.dp.toPx()))
+        // Launch pad, gone once the rocket has left (it sat right behind the Done button)
+        drawCircle(Color.White.copy(alpha = 0.15f * (1 - flight)), 60.dp.toPx(), pad.copy(y = pad.y + 30.dp.toPx()), style = Stroke(4.dp.toPx()))
     }
 }

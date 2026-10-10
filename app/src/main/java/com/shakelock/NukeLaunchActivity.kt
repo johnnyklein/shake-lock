@@ -90,7 +90,7 @@ class NukeLaunchActivity : ComponentActivity() {
     }
 }
 
-private enum class Stage { READY, LIFTOFF, WAITING, HIT, MISSED, NO_ANSWER, FAILED }
+private enum class Stage { READY, LIFTOFF, WAITING, HIT, MISSED, HIDDEN, NO_ANSWER, FAILED }
 
 @Composable
 private fun LaunchScreen(targetId: String, targetName: String, bonus: Boolean, onClose: () -> Unit) {
@@ -125,6 +125,7 @@ private fun LaunchScreen(targetId: String, targetName: String, bonus: Boolean, o
             stage = when (status) {
                 "hit" -> Stage.HIT
                 "expired" -> Stage.MISSED
+                "hidden" -> Stage.HIDDEN
                 else -> Stage.NO_ANSWER
             }
             if (stage == Stage.HIT) {
@@ -162,6 +163,7 @@ private fun LaunchScreen(targetId: String, targetName: String, bonus: Boolean, o
                 Stage.HIT -> (if (countdown == 0) "💥 BOOM" else "Direct hit! Impact in ${countdown ?: 4}…") to
                     "They were scrolling. Not anymore."
                 Stage.MISSED -> "Missed!" to "$targetName wasn't scrolling. Lucky them."
+                Stage.HIDDEN -> "Launched 🚀" to "$targetName keeps it secret whether it hit."
                 Stage.NO_ANSWER -> "No answer" to "Their phone seems to be offline."
                 Stage.FAILED -> "Didn't launch" to message
             }

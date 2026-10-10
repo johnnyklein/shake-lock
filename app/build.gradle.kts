@@ -31,6 +31,10 @@ android {
     buildTypes {
         release {
             isMinifyEnabled = false
+            // Not debuggable (no pulling the app's data off a phone over USB), but signed with the same
+            // key as the debug builds so updates still install over existing versions.
+            // Back up ~/.android/debug.keystore: without it, there's no way to ship updates.
+            signingConfig = signingConfigs.getByName("debug")
         }
     }
 

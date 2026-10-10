@@ -64,6 +64,9 @@ class LockStore(context: Context) {
     /** Off = incoming nukes fizzle. */
     var acceptNukes by boolPref("accept_nukes", true)
 
+    /** On = people who nuke you only see "launched", not whether you were scrolling. */
+    var hideHits by boolPref("hide_hits", false)
+
     /** Who nuked you, for the last lock. */
     val nukedBy: String? get() = prefs.getString(KEY_NUKED_BY, null)
 
@@ -88,7 +91,7 @@ class LockStore(context: Context) {
 
     fun isPhoneLocked() = isLocked() && activeLock == LockScope.PHONE
 
-    fun remainingMillis() = (lockedUntil - System.currentTimeMillis()).coerceAtLeast(0)
+    fun remainingMillis() = (lockedUntil - System.currentTimeMillis()).coerceIn(0, (lockedUntil - lockedAt).coerceAtLeast(0))
 
     fun startLock(
         scope: LockScope,

@@ -7,7 +7,6 @@ import io.github.jan.supabase.createSupabaseClient
 import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.postgrest.from
 import io.github.jan.supabase.postgrest.postgrest
-import io.github.jan.supabase.postgrest.query.Order
 import io.github.jan.supabase.postgrest.query.filter.FilterOperator
 import io.github.jan.supabase.realtime.PostgresAction
 import io.github.jan.supabase.realtime.Realtime
@@ -32,7 +31,21 @@ import java.time.OffsetDateTime
 data class Profile(val id: String, val name: String, val code: String)
 
 @Serializable
-private data class Friendship(val a: String, val b: String)
+private data class Friendship(
+    val a: String,
+    val b: String,
+    val status: String = "accepted",
+    @SerialName("requested_by") val requestedBy: String? = null,
+)
+
+/** Someone you're friends with, or a request in either direction. */
+data class Connection(val profile: Profile, val state: State) {
+    enum class State { FRIEND, INCOMING, OUTGOING }
+}
+
+/** Answer to entering a code: requested, accepted, already, self, not_found or rate_limited. */
+@Serializable
+data class RequestResult(val result: String, val name: String? = null)
 
 @Serializable
 data class Nuke(
@@ -81,16 +94,59 @@ object Cloud {
         return client.from("profiles").select { filter { eq("id", id) } }.decodeSingleOrNull()
     }
 
-    suspend fun friends(): List<Profile> {
+    /** Friends plus pending requests both ways. */
+    suspend fun connections(): List<Connection> {
         val id = myId()
-        val ids = client.from("friendships").select().decodeList<Friendship>().map { if (it.a == id) it.b else it.a }
-        if (ids.isEmpty()) return emptyList()
-        return client.from("profiles").select { filter { isIn("id", ids) } }.decodeList<Profile>().sortedBy { it.name.lowercase() }
+        val rows = client.from("friendships").select().decodeList<Friendship>()
+        if (rows.isEmpty()) return emptyList()
+        val other = rows.associateBy { if (it.a == id) it.b else it.a }
+        val profiles = client.from("profiles").select { filter { isIn("id", other.keys.toList()) } }.decodeList<Profile>()
+        return profiles.map { profile ->
+            val row = other.getValue(profile.id)
+            val state = when {
+                row.status == "accepted" -> Connection.State.FRIEND
+                row.requestedBy == id -> Connection.State.OUTGOING
+                else -> Connection.State.INCOMING
+            }
+            Connection(profile, state)
+        }.sortedBy { it.profile.name.lowercase() }
     }
 
-    suspend fun addFriend(code: String): Profile {
+    /** Accepted friends only (the people who can nuke you and you them). */
+    suspend fun friends(): List<Profile> = connections().filter { it.state == Connection.State.FRIEND }.map { it.profile }
+
+    /** Sends a friend request (or accepts theirs, if they already sent you one). */
+    suspend fun requestFriend(code: String): RequestResult {
         myId()
-        return client.postgrest.rpc("add_friend", buildJsonObject { put("friend_code", code) }).decodeAs()
+        return client.postgrest.rpc("request_friend", buildJsonObject { put("friend_code", code) }).decodeAs()
+    }
+
+    suspend fun respondFriend(friendId: String, accept: Boolean) {
+        myId()
+        client.postgrest.rpc("respond_friend", buildJsonObject {
+            put("friend", friendId)
+            put("accept", accept)
+        })
+    }
+
+    suspend fun blockUser(userId: String) {
+        myId()
+        client.postgrest.rpc("block_user", buildJsonObject { put("other", userId) })
+    }
+
+    /** New share code; the old one stops working. */
+    suspend fun newCode(): Profile {
+        myId()
+        return client.postgrest.rpc("new_code").decodeAs()
+    }
+
+    /** Time zone (the server resets nukes at your midnight) and whether senders may see if their nuke hit. */
+    suspend fun setSettings(timeZone: String, hideHits: Boolean) {
+        myId()
+        client.postgrest.rpc("set_settings", buildJsonObject {
+            put("tz", timeZone)
+            put("hide", hideHits)
+        })
     }
 
     suspend fun removeFriend(friendId: String) {
@@ -98,17 +154,18 @@ object Cloud {
         client.postgrest.rpc("remove_friend", buildJsonObject { put("friend", friendId) })
     }
 
-    /** Nukes reset at the sender's local midnight; [bonus] uses the secret extra one. */
+    /** The server counts nukes per day in your time zone; [bonus] uses the secret extra one. */
     suspend fun sendNuke(targetId: String, bonus: Boolean = false): Nuke {
         myId()
         return client.postgrest.rpc("send_nuke", buildJsonObject {
             put("target_id", targetId)
-            put("day_start", Instant.ofEpochMilli(startOfDay(System.currentTimeMillis())).toString())
             put("use_bonus", bonus)
         }).decodeAs()
     }
 
-    suspend fun nuke(id: Long): Nuke? = client.from("nukes").select { filter { eq("id", id) } }.decodeSingleOrNull()
+    /** Status of a nuke you sent; "hidden" if the target keeps hits private. */
+    suspend fun nuke(id: Long): Nuke? =
+        client.postgrest.rpc("nuke_status", buildJsonObject { put("nuke_id", id) }).decodeList<Nuke>().firstOrNull()
 
     suspend fun reportNuke(id: Long, status: String) {
         runCatching {
@@ -122,10 +179,7 @@ object Cloud {
     /** Last nukes I sent or received, newest first. */
     suspend fun recentNukes(): List<Nuke> {
         myId()
-        return client.from("nukes").select {
-            order("created_at", Order.DESCENDING)
-            limit(50)
-        }.decodeList()
+        return client.postgrest.rpc("recent_nukes").decodeList()
     }
 
     /** Nukes still flying at me (e.g. sent while my phone was offline). */

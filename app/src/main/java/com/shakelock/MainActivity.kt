@@ -121,11 +121,20 @@ private data class SetupState(
     val done get() = serviceEnabled && batteryUnrestricted
 }
 
-private data class AppEntry(val packageName: String, val label: String, val icon: ImageBitmap)
+private data class AppEntry(
+    val packageName: String,
+    val label: String,
+    val icon: ImageBitmap,
+    /** Time in front over the last 7 days, as counted by Airlock. */
+    val weekMs: Long,
+    val suggested: Boolean,
+)
 
 private val APP_LOCK_MINUTES = listOf(1, 5, 10, 15, 30)
 
 private val PHONE_LOCK_MINUTES = listOf(1, 2, 3)
+
+private const val MIN_USAGE_MS = 60_000L
 
 private val SENSITIVITIES = listOf("Gentle" to 1.6f, "Normal" to 2.0f, "Hard" to 2.6f)
 
@@ -170,7 +179,15 @@ private fun SetupScreen(store: LockStore, stats: StatsLog, setup: SetupState) {
     }
     // Blocked apps first, in the order they were when the screen opened (so rows don't jump on tap).
     val initiallyBlocked = remember { store.blockedApps }
-    val sortedApps = remember(apps) { apps?.sortedByDescending { it.packageName in initiallyBlocked } }
+    // Then the apps you actually spend time in, then typical doomscroll apps, then A-Z.
+    val sortedApps = remember(apps) {
+        apps?.sortedWith(
+            compareByDescending<AppEntry> { it.packageName in initiallyBlocked }
+                .thenByDescending { if (it.weekMs >= MIN_USAGE_MS) it.weekMs else 0L }
+                .thenByDescending { it.suggested }
+                .thenBy { it.label.lowercase() }
+        )
+    }
 
     LazyColumn(Modifier.fillMaxSize()) {
         item {
@@ -268,11 +285,17 @@ private fun SetupScreen(store: LockStore, stats: StatsLog, setup: SetupState) {
                 ) {
                     Image(app.icon, contentDescription = null, modifier = Modifier.size(40.dp))
                     Spacer(Modifier.width(14.dp))
-                    Text(
-                        app.label,
-                        fontWeight = if (checked) FontWeight.SemiBold else FontWeight.Normal,
-                        modifier = Modifier.weight(1f),
-                    )
+                    Column(Modifier.weight(1f)) {
+                        Text(app.label, fontWeight = if (checked) FontWeight.SemiBold else FontWeight.Normal)
+                        val note = when {
+                            app.weekMs >= MIN_USAGE_MS -> "${formatDuration(app.weekMs)} this week"
+                            app.suggested -> "Often doomscrolled"
+                            else -> null
+                        }
+                        if (note != null) {
+                            Text(note, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
                     Checkbox(checked = checked, onCheckedChange = { toggle() })
                 }
             }
@@ -753,6 +776,7 @@ private fun ShakeTester(threshold: Float) {
 
 private fun loadApps(context: Context): List<AppEntry> {
     val pm = context.packageManager
+    val usage = AppUsage.lastWeek(context)
     val launcherIntent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
     return pm.queryIntentActivities(launcherIntent, 0)
         .distinctBy { it.activityInfo.packageName }
@@ -762,6 +786,8 @@ private fun loadApps(context: Context): List<AppEntry> {
                 packageName = it.activityInfo.packageName,
                 label = it.loadLabel(pm).toString(),
                 icon = it.loadIcon(pm).toBitmap(96, 96).asImageBitmap(),
+                weekMs = usage[it.activityInfo.packageName] ?: 0L,
+                suggested = it.activityInfo.packageName in AppUsage.DOOMSCROLL_APPS,
             )
         }
         .sortedBy { it.label.lowercase() }

@@ -64,6 +64,13 @@ class LockService : AccessibilityService(), SensorEventListener {
     private val handledNukes = mutableSetOf<Long>()
     private var friendNames = mapOf<String, String>()
     private var nukeIncoming = false
+
+    // Time per app (all apps), for sorting the app list by what you actually use
+    private var usagePkg: String? = null
+    private var usageStart = 0L
+    private val homePackage by lazy {
+        packageManager.resolveActivity(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME), 0)?.activityInfo?.packageName
+    }
     private var nukeShowingUntil = 0L
 
     private val screenReceiver = object : BroadcastReceiver() {
@@ -71,6 +78,7 @@ class LockService : AccessibilityService(), SensorEventListener {
             if (intent.action == Intent.ACTION_SCREEN_OFF) {
                 chargingPkg?.let { finishCharging(it) }
                 // Screen off counts as leaving the app.
+                trackUsage(null)
                 updateSegment(null)
                 setListening(false)
                 currentPackage = null
@@ -124,6 +132,7 @@ class LockService : AccessibilityService(), SensorEventListener {
         Log.d(TAG, "foreground: $pkg blocked=$inBlockedApp")
 
         currentPackage = pkg
+        trackUsage(pkg)
         Diagnostics.update { it.copy(lastApp = pkg, lastBlockedApp = if (inBlockedApp) pkg else it.lastBlockedApp) }
         val keepOut = when {
             store.isPhoneLocked() -> pkg !in alwaysAllowed()
@@ -135,6 +144,16 @@ class LockService : AccessibilityService(), SensorEventListener {
         updateSegment(if (inBlockedApp && !keepOut) pkg else null)
         tryDetonate()
         setListening((inBlockedApp && !store.isLocked()) || chargingPkg != null)
+    }
+
+    /** Adds up time per app in front; the launcher and Airlock itself don't count. */
+    private fun trackUsage(pkg: String?) {
+        val counted = pkg?.takeIf { it != packageName && it != homePackage }
+        if (counted == usagePkg) return
+        val now = System.currentTimeMillis()
+        usagePkg?.let { AppUsage.add(this, it, usageStart, now) }
+        usagePkg = counted
+        usageStart = now
     }
 
     /** Starts/ends timing of a blocked app being in front. */
@@ -419,6 +438,7 @@ class LockService : AccessibilityService(), SensorEventListener {
 
     override fun onDestroy() {
         handler.removeCallbacksAndMessages(null)
+        trackUsage(null)
         updateSegment(null)
         setListening(false)
         unregisterReceiver(screenReceiver)

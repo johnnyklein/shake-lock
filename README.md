@@ -1,13 +1,14 @@
-# Shake Lock
+# Airlock
 
-Android app for when you catch yourself doomscrolling: shake the phone while in a selected app (Instagram, TikTok, …) and you're locked out.
+Android app for when you catch yourself doomscrolling: shake the phone while in a selected app (Instagram, TikTok, …) and you're locked out. (Formerly "Shake Lock"; the package is still `com.shakelock`.)
 
-- **Lock the selected apps** (1–30 min) or **the whole phone** (1–3 min, phone app stays usable)
+- **Click-through onboarding** with a helper bubble that floats over Android's settings and says what to tap
+- **Lock the selected apps** (1–60 min, 5 recommended) or **the whole phone** (1–10 min, calls stay usable)
 - Lock screen shows how long you'd been scrolling, plus a "Do this instead" app (e.g. To-Dodo)
-- **Learn Spanish while locked:** multiple-choice flash cards with spaced repetition; optionally the price for unlocking early
-- Smart locks, each optional: escalating locks, keep shaking = longer lock, limited comeback, early unlock with friction, scroll nudge
+- Home shows what it achieved this week: time won back, average scroll session, escapes
+- App list sorted by how much you actually use each app (tracked on the phone, no extra permission)
+- Extras: keep shaking = longer lock, scroll nudge
 - **Friends & nukes:** add friends by code, catch them doomscrolling and nuke them, a missile flies over their app, the cloud clears and their blocked apps are locked for 30 s. Live only, 3 per friend per day.
-- Stats: escapes, time in blocked apps per day, time until you went back, cards learned
 
 ## How it works
 

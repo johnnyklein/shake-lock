@@ -85,8 +85,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
-    private var serviceEnabled by mutableStateOf(false)
-    private var batteryUnrestricted by mutableStateOf(true)
+    private var setup by mutableStateOf(SetupState())
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -95,23 +94,31 @@ class MainActivity : ComponentActivity() {
         val stats = StatsLog(this)
         setContent {
             ShakeLockTheme {
-                MainScreen(store, stats, serviceEnabled, batteryUnrestricted)
+                MainScreen(store, stats, setup)
             }
         }
     }
 
     override fun onResume() {
         super.onResume()
-        // Re-check every time we come back from the settings screens.
-        serviceEnabled = isServiceEnabled()
-        batteryUnrestricted = getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(packageName)
+        // Back from the settings screens: the helper bubble's job is done, re-check everything.
+        Bubble.hide(this)
+        setup = SetupState(
+            serviceEnabled = Setup.serviceEnabled(this),
+            batteryUnrestricted = Setup.batteryUnrestricted(this),
+            canShowBubble = Setup.canShowBubble(this),
+            restricted = Setup.restrictedSettings(this),
+        )
     }
+}
 
-    private fun isServiceEnabled(): Boolean {
-        val enabled = Settings.Secure.getString(contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES) ?: return false
-        val me = ComponentName(this, LockService::class.java)
-        return enabled.split(':').any { ComponentName.unflattenFromString(it) == me }
-    }
+private data class SetupState(
+    val serviceEnabled: Boolean = true,
+    val batteryUnrestricted: Boolean = true,
+    val canShowBubble: Boolean = true,
+    val restricted: Boolean? = null,
+) {
+    val done get() = serviceEnabled && batteryUnrestricted
 }
 
 private data class AppEntry(val packageName: String, val label: String, val icon: ImageBitmap)
@@ -123,12 +130,12 @@ private val PHONE_LOCK_MINUTES = listOf(1, 2, 3)
 private val SENSITIVITIES = listOf("Gentle" to 1.6f, "Normal" to 2.0f, "Hard" to 2.6f)
 
 @Composable
-private fun MainScreen(store: LockStore, stats: StatsLog, serviceEnabled: Boolean, batteryUnrestricted: Boolean) {
+private fun MainScreen(store: LockStore, stats: StatsLog, setup: SetupState) {
     var tab by rememberSaveable { mutableIntStateOf(0) }
     Scaffold(containerColor = MaterialTheme.colorScheme.background) { padding ->
         Column(Modifier.padding(padding).fillMaxSize()) {
             Text(
-                "Shake Lock",
+                "Airlock",
                 style = MaterialTheme.typography.headlineSmall,
                 fontWeight = FontWeight.Bold,
                 modifier = Modifier.padding(start = 20.dp, top = 12.dp, bottom = 4.dp),
@@ -142,7 +149,7 @@ private fun MainScreen(store: LockStore, stats: StatsLog, serviceEnabled: Boolea
                 Tab(selected = tab == 2, onClick = { tab = 2 }, text = { Text("Friends") })
             }
             when (tab) {
-                0 -> SetupScreen(store, stats, serviceEnabled, batteryUnrestricted)
+                0 -> SetupScreen(store, stats, setup)
                 1 -> StatsScreen(stats)
                 else -> FriendsScreen(store)
             }
@@ -151,7 +158,7 @@ private fun MainScreen(store: LockStore, stats: StatsLog, serviceEnabled: Boolea
 }
 
 @Composable
-private fun SetupScreen(store: LockStore, stats: StatsLog, serviceEnabled: Boolean, batteryUnrestricted: Boolean) {
+private fun SetupScreen(store: LockStore, stats: StatsLog, setup: SetupState) {
     val context = LocalContext.current
     var blocked by remember { mutableStateOf(store.blockedApps) }
     var scope by remember { mutableStateOf(store.shakeLocks) }
@@ -167,24 +174,11 @@ private fun SetupScreen(store: LockStore, stats: StatsLog, serviceEnabled: Boole
 
     LazyColumn(Modifier.fillMaxSize()) {
         item {
-            HeroCard(store, stats, serviceEnabled, scope, if (scope == LockScope.PHONE) phoneMinutes else appMinutes, blocked, apps)
+            HeroCard(store, stats, setup.serviceEnabled, scope, if (scope == LockScope.PHONE) phoneMinutes else appMinutes, blocked, apps)
         }
 
-        if (!serviceEnabled) {
-            item {
-                WarningCard(
-                    "Turn on Shake Lock",
-                    "Accessibility settings → Shake Lock (maybe under \"Installed apps\" or \"Downloaded apps\") → on.",
-                ) {
-                    Button(onClick = { context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }) {
-                        Text("Open accessibility settings")
-                    }
-                }
-            }
-        }
-
-        if (!batteryUnrestricted) {
-            item { BatteryCard() }
+        if (!setup.done) {
+            item { SetupChecklist(setup) }
         }
 
         item {
@@ -218,8 +212,6 @@ private fun SetupScreen(store: LockStore, stats: StatsLog, serviceEnabled: Boole
         }
 
         item { SmartLockCard(store) }
-
-        item { FlashcardCard(store) }
 
         item { InsteadAppCard(store, apps) }
 
@@ -327,7 +319,7 @@ private fun HeroCard(
     ) {
         Column {
             val (status, title, subtitle) = when {
-                !serviceEnabled -> Triple("OFF", "Not running yet", "Turn on the accessibility service below.")
+                !serviceEnabled -> Triple("OFF", "Not running yet", "Finish the setup below, it takes a minute.")
                 remaining > 0 -> Triple(
                     "LOCKED",
                     formatRemaining(remaining),
@@ -431,22 +423,87 @@ private fun WarningCard(title: String, text: String, actions: @Composable Column
     }
 }
 
-/** Phones like Xiaomi freeze restricted background apps, which stops the lock from kicking in. */
+/** Step-by-step setup; the helper bubble explains each step on top of the Settings app. */
 @Composable
-private fun BatteryCard() {
+private fun SetupChecklist(setup: SetupState) {
     val context = LocalContext.current
-    val appUri = Uri.parse("package:${context.packageName}")
-    WarningCard(
-        "Let Shake Lock run in the background",
-        "Otherwise your phone freezes it and you can open blocked apps during a lock. " +
-            "On Xiaomi: App settings → Battery saver → No restrictions, and turn on Autostart.",
-    ) {
-        Button(onClick = {
-            context.startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, appUri))
-        }) { Text("Allow background use") }
-        TextButton(onClick = {
-            context.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, appUri))
-        }) { Text("Open app settings") }
+    val restrictedHint = "Tap ⋮ (top right) → Allow restricted settings"
+    WarningCard("Set up Airlock", "A few switches so Airlock can see which app is open and keep running.") {
+        if (!setup.canShowBubble) {
+            SetupStep(
+                mark = "?",
+                title = "Helper bubble (optional)",
+                text = "Shows a little tip on top of Settings, so you know exactly what to tap.",
+                action = "Allow",
+            ) { Setup.openBubblePermission(context) }
+        }
+        SetupStep(
+            mark = if (setup.serviceEnabled) "✓" else "1",
+            title = "Turn on Airlock",
+            text = when {
+                setup.serviceEnabled -> "Done."
+                setup.restricted == true -> "Android blocks this for apps that aren't from the Play Store. Unlock it first, then turn Airlock on."
+                else -> "One switch in the accessibility settings."
+            },
+            action = when {
+                setup.serviceEnabled -> null
+                setup.restricted == true -> "Unlock"
+                else -> "Turn on"
+            },
+        ) {
+            if (setup.restricted == true) Setup.openAppInfo(context, restrictedHint, "Then come back to Airlock.")
+            else Setup.openAccessibility(context)
+        }
+        if (!setup.serviceEnabled && setup.restricted != true) {
+            TextButton(onClick = { Setup.openAppInfo(context, restrictedHint, "Then come back and turn Airlock on.") }) {
+                Text("Switch greyed out?")
+            }
+        }
+        SetupStep(
+            mark = if (setup.batteryUnrestricted) "✓" else "2",
+            title = "Keep it running",
+            text = when {
+                setup.batteryUnrestricted && Setup.isXiaomi -> "Xiaomi also needs: App info → Battery saver → No restrictions, and Autostart on."
+                setup.batteryUnrestricted -> "Done."
+                Setup.isXiaomi -> "Allow it, then in App info set Battery saver → No restrictions and turn on Autostart. Otherwise Xiaomi freezes Airlock."
+                else -> "Lets Airlock keep running in the background."
+            },
+            action = if (setup.batteryUnrestricted) null else "Allow",
+        ) { Setup.requestBattery(context) }
+        if (Setup.isXiaomi) {
+            TextButton(onClick = {
+                Setup.openAppInfo(context, "Battery saver → No restrictions", "And turn on Autostart.")
+            }) { Text("Open Xiaomi battery settings") }
+        }
+    }
+}
+
+@Composable
+private fun SetupStep(mark: String, title: String, text: String, action: String?, onAction: () -> Unit) {
+    val done = mark == "✓"
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
+        Box(
+            contentAlignment = Alignment.Center,
+            modifier = Modifier
+                .size(30.dp)
+                .clip(CircleShape)
+                .background(if (done) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onTertiaryContainer.copy(alpha = 0.15f)),
+        ) {
+            Text(
+                mark,
+                fontWeight = FontWeight.Bold,
+                color = if (done) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onTertiaryContainer,
+            )
+        }
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(title, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onTertiaryContainer)
+            Text(text, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onTertiaryContainer)
+        }
+        if (action != null) {
+            Spacer(Modifier.width(8.dp))
+            Button(onClick = onAction) { Text(action) }
+        }
     }
 }
 
@@ -481,41 +538,19 @@ private fun MinuteChips(options: List<Int>, selected: Int, onSelect: (Int) -> Un
     }
 }
 
-/** Experiments, each with its own switch so they can be tried one by one. */
+/** Optional extras. */
 @Composable
 private fun SmartLockCard(store: LockStore) {
-    var escalate by remember { mutableStateOf(store.escalate) }
     var charge by remember { mutableStateOf(store.chargeByShaking) }
-    var reentry by remember { mutableStateOf(store.reentryLimit) }
-    var reentryMinutes by remember { mutableIntStateOf(store.reentryMinutes) }
-    var early by remember { mutableStateOf(store.earlyUnlock) }
     var nudge by remember { mutableStateOf(store.nudge) }
     var nudgeMinutes by remember { mutableIntStateOf(store.nudgeMinutes) }
 
-    SettingsCard("Smart locks", "Optional extras, try them one by one.") {
-        SwitchRow(
-            "Escalating locks",
-            "Every lock today doubles the time: 5 → 10 → 20 min (max 60, whole phone max 10).",
-            escalate,
-        ) { escalate = it; store.escalate = it }
+    SettingsCard("Extras") {
         SwitchRow(
             "Keep shaking = longer lock",
             "One shake starts the lock, every extra second you keep shaking adds a minute.",
             charge,
         ) { charge = it; store.chargeByShaking = it }
-        SwitchRow(
-            "Limited comeback",
-            "After a lock you get $reentryMinutes min in blocked apps, then it locks again (for the next hour).",
-            reentry,
-        ) { reentry = it; store.reentryLimit = it }
-        if (reentry) {
-            MinuteChips(listOf(3, 5, 10), reentryMinutes) { reentryMinutes = it; store.reentryMinutes = it }
-        }
-        SwitchRow(
-            "Unlock early, with friction",
-            "Lock screen gets an unlock button. With flash cards on you answer Spanish cards, otherwise you wait 30 s and type a sentence.",
-            early,
-        ) { early = it; store.earlyUnlock = it }
         SwitchRow(
             "Scroll nudge",
             "A soft buzz every $nudgeMinutes min of scrolling, as a reminder that you can shake out.",
@@ -523,43 +558,6 @@ private fun SmartLockCard(store: LockStore) {
         ) { nudge = it; store.nudge = it }
         if (nudge) {
             MinuteChips(listOf(10, 20, 30), nudgeMinutes) { nudgeMinutes = it; store.nudgeMinutes = it }
-        }
-    }
-}
-
-/** Spanish micro-learning on the lock screen. */
-@Composable
-private fun FlashcardCard(store: LockStore) {
-    val context = LocalContext.current
-    var enabled by remember { mutableStateOf(store.flashcards) }
-    var unlockCards by remember { mutableIntStateOf(store.unlockCards) }
-    val known = remember { Srs(context).knownCount() }
-    val total = remember { SpanishDeck.load(context).size }
-
-    SettingsCard("Learn while locked", "Spanish → English, $known of $total words known so far.") {
-        SwitchRow(
-            "Spanish flash cards",
-            "Practise common words on the lock screen. Wrong answers come back soon, known words fade out.",
-            enabled,
-        ) { enabled = it; store.flashcards = it }
-        if (enabled) {
-            Spacer(Modifier.height(4.dp))
-            Text("Right answers to unlock early", style = MaterialTheme.typography.labelLarge)
-            Text(
-                "Only used when Unlock early is on in Smart locks.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Spacer(Modifier.height(6.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf(5, 10, 15).forEach { option ->
-                    FilterChip(
-                        selected = option == unlockCards,
-                        onClick = { unlockCards = option; store.unlockCards = option },
-                        label = { Text("$option cards") },
-                    )
-                }
-            }
         }
     }
 }

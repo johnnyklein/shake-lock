@@ -19,7 +19,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
@@ -28,15 +27,11 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -87,7 +82,6 @@ class BlockedActivity : ComponentActivity() {
                     onDone = ::goHome,
                     onEmergencyCall = ::openDialer,
                     onOpenInstead = ::openInstead,
-                    onUnlockEarly = ::unlockEarly,
                 )
             }
         }
@@ -118,18 +112,6 @@ class BlockedActivity : ComponentActivity() {
         finish()
     }
 
-    private fun unlockEarly() {
-        store.endLockEarly()
-        StatsLog(this).add(EarlyUnlockEvent(System.currentTimeMillis()))
-        val pkg = store.lastLockPkg
-        if (store.activeLock == LockScope.APPS && pkg != null) {
-            packageManager.getLaunchIntentForPackage(pkg)?.let {
-                startActivity(it.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-            }
-        }
-        finish()
-    }
-
     private fun goHome() {
         startActivity(
             Intent(Intent.ACTION_MAIN)
@@ -144,10 +126,6 @@ class BlockedActivity : ComponentActivity() {
     }
 }
 
-private enum class LockMode { TIMER, LEARN, UNLOCK }
-
-private const val UNLOCK_PHRASE = "I choose to keep scrolling"
-private const val UNLOCK_WAIT_SECONDS = 30
 private const val BREATH_MS = 4000
 
 private val OnNight = Color.White
@@ -162,11 +140,9 @@ private fun BlockedScreen(
     onDone: () -> Unit,
     onEmergencyCall: () -> Unit,
     onOpenInstead: () -> Unit,
-    onUnlockEarly: () -> Unit,
 ) {
     val phoneLock = store.activeLock == LockScope.PHONE
     val total = (store.lockedUntil - store.lockedAt).coerceAtLeast(1)
-    var mode by remember { mutableStateOf(LockMode.TIMER) }
     val charging by Charging.state.collectAsState()
     // Keeps ticking: while charging there's no lock yet, it starts when you stop shaking.
     val remaining by produceState(store.remainingMillis()) {
@@ -180,8 +156,7 @@ private fun BlockedScreen(
         Modifier
             .fillMaxSize()
             .background(NightGradient)
-            .safeDrawingPadding()
-            .imePadding(),
+            .safeDrawingPadding(),
         contentAlignment = Alignment.Center,
     ) {
         Column(
@@ -191,29 +166,6 @@ private fun BlockedScreen(
         ) {
             if (charging.active) {
                 ChargingView(charging)
-            } else if (remaining > 0 && mode != LockMode.TIMER) {
-                Text(
-                    "${if (phoneLock) "PHONE LOCKED" else "LOCKED"} · ${formatRemaining(remaining)}",
-                    color = Coral,
-                    fontWeight = FontWeight.Bold,
-                    letterSpacing = 2.sp,
-                    fontSize = 13.sp,
-                )
-                Spacer(Modifier.height(6.dp))
-                Text(
-                    if (mode == LockMode.UNLOCK) "Get ${store.unlockCards} right to unlock" else "Spanish practice",
-                    color = OnNight,
-                    fontSize = 22.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    textAlign = TextAlign.Center,
-                )
-                Spacer(Modifier.height(20.dp))
-                FlashCardQuiz(
-                    goal = if (mode == LockMode.UNLOCK) store.unlockCards else null,
-                    onGoal = onUnlockEarly,
-                )
-                Spacer(Modifier.height(16.dp))
-                TextButton(onClick = { mode = LockMode.TIMER }) { Text("Back to the timer", color = OnNightMuted) }
             } else if (remaining > 0) {
                 Text(
                     if (phoneLock) "PHONE LOCKED" else "LOCKED",
@@ -236,7 +188,6 @@ private fun BlockedScreen(
                 )
                 val why = when {
                     store.lastTrigger == Trigger.NUKE -> "${store.nukedBy ?: "A friend"} nuked you. 💥"
-                    store.lastTrigger == Trigger.REENTRY -> "Your ${store.reentryMinutes} minutes back are up."
                     store.lastSessionMs >= 60_000 -> "You were on $appLabel for ${formatDuration(store.lastSessionMs)}."
                     else -> null
                 }
@@ -257,30 +208,12 @@ private fun BlockedScreen(
                     ) { Text("Open $insteadLabel instead", fontWeight = FontWeight.SemiBold) }
                     Spacer(Modifier.height(12.dp))
                 }
-                if (store.flashcards) {
-                    OutlinedButton(
-                        onClick = { mode = LockMode.LEARN },
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = OnNight),
-                        modifier = Modifier.fillMaxWidth().height(52.dp),
-                    ) { Text("Learn Spanish while you wait") }
-                    Spacer(Modifier.height(12.dp))
-                }
                 if (phoneLock) {
                     OutlinedButton(
                         onClick = onEmergencyCall,
                         colors = ButtonDefaults.outlinedButtonColors(contentColor = OnNight),
                         modifier = Modifier.fillMaxWidth().height(52.dp),
                     ) { Text("Phone / emergency call") }
-                }
-                if (store.earlyUnlock && store.lastTrigger != Trigger.NUKE) {
-                    Spacer(Modifier.height(20.dp))
-                    if (store.flashcards) {
-                        TextButton(onClick = { mode = LockMode.UNLOCK }) {
-                            Text("Unlock early: get ${store.unlockCards} Spanish cards right", color = OnNightMuted)
-                        }
-                    } else {
-                        EarlyUnlock(onUnlockEarly)
-                    }
                 }
             } else {
                 Text("Lock is over", color = OnNight, fontSize = 28.sp, fontWeight = FontWeight.SemiBold)
@@ -384,56 +317,6 @@ private fun CountdownRing(remaining: Long, total: Long) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Text(formatRemaining(remaining), color = OnNight, fontSize = 60.sp, fontWeight = FontWeight.Bold)
             Text(if (inhale) "Breathe in…" else "Breathe out…", color = OnNightMuted, fontSize = 15.sp)
-        }
-    }
-}
-
-/** Getting back in early is possible, but takes a 30 s wait and typing a sentence. */
-@Composable
-private fun EarlyUnlock(onUnlock: () -> Unit) {
-    var stage by remember { mutableIntStateOf(0) } // 0 = button, 1 = waiting, 2 = typing
-    var secondsLeft by remember { mutableIntStateOf(UNLOCK_WAIT_SECONDS) }
-    var typed by remember { mutableStateOf("") }
-
-    LaunchedEffect(stage) {
-        if (stage == 1) {
-            secondsLeft = UNLOCK_WAIT_SECONDS
-            while (secondsLeft > 0) {
-                delay(1000)
-                secondsLeft--
-            }
-            stage = 2
-        }
-    }
-
-    when (stage) {
-        0 -> TextButton(onClick = { stage = 1 }) { Text("Unlock early", color = OnNightMuted) }
-        1 -> Text(
-            "Still want in? Sit with it for a moment… $secondsLeft s",
-            color = OnNightMuted,
-            fontSize = 14.sp,
-            textAlign = TextAlign.Center,
-        )
-        else -> Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text("Type \"$UNLOCK_PHRASE\" to unlock", color = OnNightMuted, fontSize = 14.sp, textAlign = TextAlign.Center)
-            Spacer(Modifier.height(8.dp))
-            OutlinedTextField(
-                value = typed,
-                onValueChange = { typed = it },
-                singleLine = true,
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedTextColor = OnNight,
-                    unfocusedTextColor = OnNight,
-                    focusedBorderColor = OnNight,
-                    unfocusedBorderColor = OnNightMuted,
-                    cursorColor = OnNight,
-                ),
-                modifier = Modifier.fillMaxWidth(),
-            )
-            TextButton(
-                onClick = onUnlock,
-                enabled = typed.trim().equals(UNLOCK_PHRASE, ignoreCase = true),
-            ) { Text("Unlock", color = if (typed.isNotBlank()) OnNight else OnNightMuted) }
         }
     }
 }

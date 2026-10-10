@@ -52,8 +52,6 @@ class LockService : AccessibilityService(), SensorEventListener {
     private var sessionStart = 0L // start of the scrolling session; spans quick app switches
     private var lastBlockedLeftAt = 0L
     private var nextNudgeAtMs = 0L // session length at which the next nudge fires
-    private var reentryUsedMs = 0L // time in blocked apps since the lock ending at [reentryForLock]
-    private var reentryForLock = 0L
 
     // "Keep shaking = longer lock"
     private var chargingPkg: String? = null
@@ -95,6 +93,7 @@ class LockService : AccessibilityService(), SensorEventListener {
         }
         ContextCompat.registerReceiver(this, screenReceiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED)
         Diagnostics.update { it.copy(serviceRunning = true) }
+        Bubble.hide(this)
         Cloud.inboxStarter = ::startNukes
         startNukes()
         // We may have been (re)started while an app is already open: look now, not at the next app switch.
@@ -143,7 +142,6 @@ class LockService : AccessibilityService(), SensorEventListener {
         if (pkg == segmentPkg) return
         val now = System.currentTimeMillis()
         segmentPkg?.let { previous ->
-            reentryUsedMs = reentryUsed(now)
             stats.add(UseEvent(segmentStart, previous, now))
             lastBlockedLeftAt = now
         }
@@ -172,27 +170,7 @@ class LockService : AccessibilityService(), SensorEventListener {
 
         tryDetonate()
         if (segmentPkg == null) return
-
-        val sinceLockEnded = now - store.lockedUntil
-        if (store.reentryLimit && store.lastTrigger != Trigger.NUKE && store.lockedUntil > 0 &&
-            sinceLockEnded in 0 until REENTRY_WINDOW_MS &&
-            reentryUsed(now) >= store.reentryMinutes * 60_000L
-        ) {
-            lock(pkg, Trigger.REENTRY, extraMinutes = 0)
-            return
-        }
         handler.postDelayed(tick, TICK_MS)
-    }
-
-    /** Time spent in blocked apps since the last lock ended, including the app open right now. */
-    private fun reentryUsed(now: Long): Long {
-        val lockEnd = store.lockedUntil
-        if (reentryForLock != lockEnd) {
-            reentryForLock = lockEnd
-            reentryUsedMs = 0
-        }
-        val current = if (segmentPkg != null) (now - maxOf(segmentStart, lockEnd)).coerceAtLeast(0) else 0
-        return reentryUsedMs + current
     }
 
     private fun onShake(@Suppress("UNUSED_PARAMETER") peakG: Float) {
@@ -349,13 +327,9 @@ class LockService : AccessibilityService(), SensorEventListener {
         }, NUKE_WARNING_MS)
     }
 
-    /** Base duration, doubled per earlier lock today (escalation), plus minutes earned by shaking longer. */
+    /** Chosen duration plus minutes earned by shaking longer. */
     private fun lockMinutes(scope: LockScope, extraMinutes: Int): Int {
-        var minutes = if (scope == LockScope.PHONE) store.phoneLockMinutes else store.lockMinutes
-        if (store.escalate) {
-            minutes *= 1 shl stats.locksToday().coerceAtMost(6)
-        }
-        minutes += extraMinutes
+        val minutes = (if (scope == LockScope.PHONE) store.phoneLockMinutes else store.lockMinutes) + extraMinutes
         return minutes.coerceAtMost(if (scope == LockScope.PHONE) MAX_PHONE_LOCK_MIN else MAX_APP_LOCK_MIN)
     }
 
@@ -459,7 +433,6 @@ class LockService : AccessibilityService(), SensorEventListener {
         const val KICK_FALLBACK_MS = 800L
         const val TICK_MS = 10_000L
         const val SESSION_GAP_MS = 60_000L // away for longer than this = new session
-        const val REENTRY_WINDOW_MS = 60 * 60_000L // comeback limit applies for an hour after a lock
         const val CHARGE_SPIKE_FACTOR = 0.8f // still counts as shaking, slightly below the trigger threshold
         const val CHARGE_IDLE_MS = 800L // stopped shaking for this long = lock is set
         const val PULSE_MIN_GAP_MS = 120L

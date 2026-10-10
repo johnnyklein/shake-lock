@@ -39,17 +39,12 @@ private data class WeekStats(
     val days: List<DayStats>,
     val useMs: Long,
     val escapes: Int,
-    val autoRelocks: Int,
     val lockedMs: Long,
-    val earlyUnlocks: Int,
     val nudges: Int,
     val avgSessionBeforeShakeMs: Long?,
     val medianComebackMs: Long?,
     val topApps: List<Pair<String, Long>>,
     val escapeStreak: Int,
-    val cardsAnswered: Int,
-    val cardsRight: Int,
-    val wordsKnown: Int,
 )
 
 @Composable
@@ -101,15 +96,7 @@ fun StatsScreen(stats: StatsLog) {
                     Fact("Average scroll before you shook", data.avgSessionBeforeShakeMs?.let(::formatDuration) ?: "–")
                     Fact("Typical time until you went back", data.medianComebackMs?.let(::formatDuration) ?: "–")
                     Fact("Time spent locked", formatDuration(data.lockedMs))
-                    Fact("Re-locks from comeback limit", data.autoRelocks.toString())
-                    Fact("Early unlocks", data.earlyUnlocks.toString())
                     Fact("Nudges", data.nudges.toString())
-                    Fact(
-                        "Spanish cards answered",
-                        if (data.cardsAnswered == 0) "0"
-                        else "${data.cardsAnswered} (${data.cardsRight * 100 / data.cardsAnswered}% right)",
-                    )
-                    Fact("Spanish words you know", data.wordsKnown.toString())
                 }
             }
         }
@@ -206,7 +193,7 @@ private fun summarize(events: List<StatEvent>, now: Long, context: Context): Wee
     fun useBetween(from: Long, to: Long) = uses.sumOf { (minOf(it.until, to) - maxOf(it.at, from)).coerceAtLeast(0) }
     fun escapesBetween(from: Long, to: Long) = locks.count { it.trigger == Trigger.SHAKE && it.at >= from && it.at < to }
 
-    // When a lock really ended: its planned end, or an early unlock during it.
+    // When a lock really ended: its planned end, or an early unlock during it (older versions had those).
     fun lockEnd(lock: LockEvent): Long {
         val planned = lock.at + lock.durationMs
         val early = earlyUnlocks.firstOrNull { it.at in lock.at..planned }?.at
@@ -239,8 +226,6 @@ private fun summarize(events: List<StatEvent>, now: Long, context: Context): Wee
         .take(5)
         .map { label(it.key) to it.value }
 
-    val weekCards = events.filterIsInstance<CardEvent>().filter { it.at >= weekStart }
-
     // Days in a row with at least one escape, counting back from today (or yesterday, if none yet today).
     var streak = 0
     var day = if (escapesBetween(today, addDays(today, 1)) > 0) today else addDays(today, -1)
@@ -253,17 +238,12 @@ private fun summarize(events: List<StatEvent>, now: Long, context: Context): Wee
         days = days,
         useMs = days.sumOf { it.useMs },
         escapes = weekShakes.size,
-        autoRelocks = weekLocks.count { it.trigger == Trigger.REENTRY },
         lockedMs = weekLocks.sumOf { lockEnd(it) - it.at },
-        earlyUnlocks = earlyUnlocks.count { it.at >= weekStart },
         nudges = events.count { it is NudgeEvent && it.at >= weekStart },
         avgSessionBeforeShakeMs = weekShakes.map { it.sessionMs }.filter { it > 0 }.takeIf { it.isNotEmpty() }?.average()?.toLong(),
         medianComebackMs = comebacks.getOrNull(comebacks.size / 2),
         topApps = topApps,
         escapeStreak = streak,
-        cardsAnswered = weekCards.size,
-        cardsRight = weekCards.count { it.correct },
-        wordsKnown = Srs(context).knownCount(),
     )
 }
 

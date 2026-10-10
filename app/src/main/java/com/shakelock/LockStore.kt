@@ -9,6 +9,7 @@ import kotlin.reflect.KProperty
 enum class LockScope { APPS, PHONE }
 
 /** Why a lock started. */
+// REENTRY is no longer used, but old stats still contain it.
 enum class Trigger { SHAKE, REENTRY, NUKE }
 
 /** Settings and lock state, shared between the UI and [LockService]. */
@@ -36,17 +37,10 @@ class LockStore(context: Context) {
         set(value) = prefs.edit { putFloat(KEY_THRESHOLD, value) }
 
     // Smart lock experiments, all off by default.
-    var escalate by boolPref("escalate", false)
     var chargeByShaking by boolPref("charge_by_shaking", false)
-    var reentryLimit by boolPref("reentry_limit", false)
-    var reentryMinutes by intPref("reentry_minutes", 5)
-    var earlyUnlock by boolPref("early_unlock", false)
     var nudge by boolPref("nudge", false)
     var nudgeMinutes by intPref("nudge_minutes", 20)
 
-    /** Spanish flash cards on the lock screen; also the price for unlocking early. */
-    var flashcards by boolPref("flashcards", true)
-    var unlockCards by intPref("unlock_cards", 5)
 
     /** App offered on the lock screen as the better alternative (e.g. To-Dodo). Always usable. */
     var insteadApp: String?
@@ -108,7 +102,6 @@ class LockStore(context: Context) {
         putString(KEY_LAST_TRIGGER, trigger.name)
     }
 
-    fun endLockEarly() = prefs.edit { putLong(KEY_UNTIL, System.currentTimeMillis()) }
 
     private fun boolPref(key: String, default: Boolean) = object : ReadWriteProperty<Any?, Boolean> {
         override fun getValue(thisRef: Any?, property: KProperty<*>) = prefs.getBoolean(key, default)

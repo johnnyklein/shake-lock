@@ -193,7 +193,7 @@ private fun FriendsList(store: LockStore) {
                     Button(
                         enabled = me != null,
                         onClick = {
-                            val text = "Add me on Shake Lock so we can nuke each other's doomscrolling 💥 My code: ${me?.code}\n" +
+                            val text = "Add me on Airlock so we can nuke each other's doomscrolling 💥 My code: ${me?.code}\n" +
                                 "Get the app: https://github.com/johnnyklein/shake-lock/releases/latest"
                             context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, text), null))
                         },

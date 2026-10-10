@@ -26,7 +26,10 @@ class LockStore(context: Context) {
         set(value) = prefs.edit { putString(KEY_SHAKE_LOCKS, value.name) }
 
     /** Lock length when [shakeLocks] is [LockScope.APPS]. */
-    var lockMinutes by intPref("lock_minutes", 3)
+    var lockMinutes by intPref("lock_minutes", 5)
+
+    /** Set once you've picked a lock time during setup. */
+    var lockChosen by boolPref("lock_chosen", false)
 
     /** Lock length when [shakeLocks] is [LockScope.PHONE]. */
     var phoneLockMinutes by intPref("phone_lock_minutes", 3)

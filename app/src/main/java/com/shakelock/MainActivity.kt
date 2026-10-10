@@ -14,6 +14,7 @@ import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -92,15 +93,16 @@ import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
     private var setup by mutableStateOf(SetupState())
+    private lateinit var store: LockStore
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        val store = LockStore(this)
+        store = LockStore(this)
         val stats = StatsLog(this)
         setContent {
             ShakeLockTheme {
-                MainScreen(store, stats, setup)
+                MainScreen(store, stats, setup, onSetupChanged = ::refreshSetup)
             }
         }
     }
@@ -109,7 +111,12 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         // Back from the settings screens: the helper bubble's job is done, re-check everything.
         Bubble.hide(this)
+        refreshSetup()
+    }
+
+    private fun refreshSetup() {
         setup = SetupState(
+            lockChosen = store.lockChosen,
             serviceEnabled = Setup.serviceEnabled(this),
             batteryUnrestricted = Setup.batteryUnrestricted(this),
             canShowBubble = Setup.canShowBubble(this),
@@ -120,13 +127,14 @@ class MainActivity : ComponentActivity() {
 }
 
 private data class SetupState(
+    val lockChosen: Boolean = true,
     val serviceEnabled: Boolean = true,
     val batteryUnrestricted: Boolean = true,
     val canShowBubble: Boolean = true,
     val restricted: Boolean? = null,
     val checkedAt: Long = 0L,
 ) {
-    val done get() = serviceEnabled && batteryUnrestricted
+    val done get() = lockChosen && serviceEnabled && batteryUnrestricted
 }
 
 data class AppEntry(
@@ -143,7 +151,7 @@ private const val MIN_USAGE_MS = 60_000L
 private val SENSITIVITIES = listOf("Gentle" to 1.6f, "Normal" to 2.0f, "Hard" to 2.6f)
 
 @Composable
-private fun MainScreen(store: LockStore, stats: StatsLog, setup: SetupState) {
+private fun MainScreen(store: LockStore, stats: StatsLog, setup: SetupState, onSetupChanged: () -> Unit) {
     var tab by rememberSaveable { mutableIntStateOf(0) }
     Scaffold(containerColor = MaterialTheme.colorScheme.background) { padding ->
         Column(Modifier.padding(padding).fillMaxSize()) {
@@ -168,7 +176,7 @@ private fun MainScreen(store: LockStore, stats: StatsLog, setup: SetupState) {
                 Tab(selected = tab == 2, onClick = { tab = 2 }, text = { Text("Friends") })
             }
             when (tab) {
-                0 -> SetupScreen(store, stats, setup)
+                0 -> SetupScreen(store, stats, setup, onSetupChanged)
                 1 -> StatsScreen(stats)
                 else -> FriendsScreen(store)
             }
@@ -177,7 +185,7 @@ private fun MainScreen(store: LockStore, stats: StatsLog, setup: SetupState) {
 }
 
 @Composable
-private fun SetupScreen(store: LockStore, stats: StatsLog, setup: SetupState) {
+private fun SetupScreen(store: LockStore, stats: StatsLog, setup: SetupState, onSetupChanged: () -> Unit) {
     val context = LocalContext.current
     var blocked by remember { mutableStateOf(store.blockedApps) }
     // Lock options live in Settings; re-read them whenever we come back.
@@ -204,9 +212,12 @@ private fun SetupScreen(store: LockStore, stats: StatsLog, setup: SetupState) {
             HeroCard(store, stats, setup.serviceEnabled, scope, minutes, blocked, apps)
         }
 
+        // Until setup is done, it comes first; the wins come after.
         if (!setup.done) {
-            item { SetupChecklist(setup) }
+            item { SetupChecklist(setup, store, onSetupChanged) }
         }
+
+        item { ImpactStrip(stats, refreshKey = setup) }
 
         item {
             Text(
@@ -406,14 +417,15 @@ fun SettingsCard(title: String, subtitle: String? = null, content: @Composable C
 @Composable
 private fun WarningCard(title: String, text: String, actions: @Composable ColumnScope.() -> Unit) {
     Card(
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+        border = BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary),
         shape = MaterialTheme.shapes.medium,
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
     ) {
         Column(Modifier.padding(18.dp)) {
-            Text(title, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onTertiaryContainer)
+            Text(title, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
             Spacer(Modifier.height(4.dp))
-            Text(text, color = MaterialTheme.colorScheme.onTertiaryContainer, style = MaterialTheme.typography.bodyMedium)
+            Text(text, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
             Spacer(Modifier.height(12.dp))
             actions()
         }
@@ -422,10 +434,24 @@ private fun WarningCard(title: String, text: String, actions: @Composable Column
 
 /** Step-by-step setup; the helper bubble explains each step on top of the Settings app. */
 @Composable
-private fun SetupChecklist(setup: SetupState) {
+private fun SetupChecklist(setup: SetupState, store: LockStore, onChanged: () -> Unit) {
     val context = LocalContext.current
     val restrictedHint = "Tap ⋮ (top right) → Allow restricted settings"
-    WarningCard("Set up Airlock", "A few switches so Airlock can see which app is open and keep running.") {
+    WarningCard("Set up Airlock", "Three quick steps, then shake whenever you catch yourself scrolling.") {
+        SetupStep(
+            mark = if (setup.lockChosen) "✓" else "1",
+            title = "Pick your lock time",
+            text = if (setup.lockChosen) "${store.lockMinutes} min. You can change it in Settings."
+            else "How long should a shake keep you out? You can change it later.",
+            action = null,
+        ) {}
+        if (!setup.lockChosen) {
+            LockTimePicker { minutes ->
+                store.lockMinutes = minutes
+                store.lockChosen = true
+                onChanged()
+            }
+        }
         if (!setup.canShowBubble) {
             SetupStep(
                 mark = "?",
@@ -435,7 +461,7 @@ private fun SetupChecklist(setup: SetupState) {
             ) { Setup.openBubblePermission(context) }
         }
         SetupStep(
-            mark = if (setup.serviceEnabled) "✓" else "1",
+            mark = if (setup.serviceEnabled) "✓" else "2",
             title = "Turn on Airlock",
             text = when {
                 setup.serviceEnabled -> "Done."
@@ -457,7 +483,7 @@ private fun SetupChecklist(setup: SetupState) {
             }
         }
         SetupStep(
-            mark = if (setup.batteryUnrestricted) "✓" else "2",
+            mark = if (setup.batteryUnrestricted) "✓" else "3",
             title = "Keep it running",
             text = when {
                 setup.batteryUnrestricted && Setup.isXiaomi -> "Xiaomi also needs: App info → Battery saver → No restrictions, and Autostart on."
@@ -475,6 +501,37 @@ private fun SetupChecklist(setup: SetupState) {
     }
 }
 
+/** 1 / 5 / 10 min, with 5 recommended. */
+@Composable
+private fun LockTimePicker(onPick: (Int) -> Unit) {
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = Modifier.fillMaxWidth().padding(start = 42.dp, bottom = 6.dp),
+    ) {
+        listOf(1 to null, 5 to "recommended", 10 to null).forEach { (minutes, tag) ->
+            val recommended = tag != null
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(MaterialTheme.shapes.small)
+                    .background(if (recommended) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceContainerHighest)
+                    .clickable { onPick(minutes) }
+                    .padding(vertical = 10.dp),
+            ) {
+                Text(
+                    "$minutes min",
+                    fontWeight = FontWeight.Bold,
+                    color = if (recommended) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
+                )
+                if (tag != null) {
+                    Text(tag, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onPrimary)
+                }
+            }
+        }
+    }
+}
+
 @Composable
 private fun SetupStep(mark: String, title: String, text: String, action: String?, onAction: () -> Unit) {
     val done = mark == "✓"
@@ -484,18 +541,18 @@ private fun SetupStep(mark: String, title: String, text: String, action: String?
             modifier = Modifier
                 .size(30.dp)
                 .clip(CircleShape)
-                .background(if (done) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onTertiaryContainer.copy(alpha = 0.15f)),
+                .background(if (done) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.primaryContainer),
         ) {
             Text(
                 mark,
                 fontWeight = FontWeight.Bold,
-                color = if (done) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onTertiaryContainer,
+                color = if (done) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onPrimaryContainer,
             )
         }
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
-            Text(title, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onTertiaryContainer)
-            Text(text, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onTertiaryContainer)
+            Text(title, fontWeight = FontWeight.SemiBold)
+            Text(text, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         if (action != null) {
             Spacer(Modifier.width(8.dp))

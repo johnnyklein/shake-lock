@@ -20,6 +20,8 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -36,7 +38,11 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -108,6 +114,7 @@ class MainActivity : ComponentActivity() {
             batteryUnrestricted = Setup.batteryUnrestricted(this),
             canShowBubble = Setup.canShowBubble(this),
             restricted = Setup.restrictedSettings(this),
+            checkedAt = System.currentTimeMillis(),
         )
     }
 }
@@ -117,11 +124,12 @@ private data class SetupState(
     val batteryUnrestricted: Boolean = true,
     val canShowBubble: Boolean = true,
     val restricted: Boolean? = null,
+    val checkedAt: Long = 0L,
 ) {
     val done get() = serviceEnabled && batteryUnrestricted
 }
 
-private data class AppEntry(
+data class AppEntry(
     val packageName: String,
     val label: String,
     val icon: ImageBitmap,
@@ -129,10 +137,6 @@ private data class AppEntry(
     val weekMs: Long,
     val suggested: Boolean,
 )
-
-private val APP_LOCK_MINUTES = listOf(1, 5, 10, 15, 30)
-
-private val PHONE_LOCK_MINUTES = listOf(1, 2, 3)
 
 private const val MIN_USAGE_MS = 60_000L
 
@@ -143,17 +147,23 @@ private fun MainScreen(store: LockStore, stats: StatsLog, setup: SetupState) {
     var tab by rememberSaveable { mutableIntStateOf(0) }
     Scaffold(containerColor = MaterialTheme.colorScheme.background) { padding ->
         Column(Modifier.padding(padding).fillMaxSize()) {
-            Text(
-                "Airlock",
-                style = MaterialTheme.typography.headlineSmall,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(start = 20.dp, top = 12.dp, bottom = 4.dp),
-            )
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 20.dp, top = 4.dp, end = 4.dp)) {
+                Text(
+                    "Airlock",
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.weight(1f),
+                )
+                val context = LocalContext.current
+                IconButton(onClick = { context.startActivity(Intent(context, SettingsActivity::class.java)) }) {
+                    Icon(Icons.Filled.Settings, contentDescription = "Settings")
+                }
+            }
             TabRow(
                 selectedTabIndex = tab,
                 containerColor = MaterialTheme.colorScheme.background,
             ) {
-                Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("Setup") })
+                Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("Home") })
                 Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("Stats") })
                 Tab(selected = tab == 2, onClick = { tab = 2 }, text = { Text("Friends") })
             }
@@ -170,9 +180,9 @@ private fun MainScreen(store: LockStore, stats: StatsLog, setup: SetupState) {
 private fun SetupScreen(store: LockStore, stats: StatsLog, setup: SetupState) {
     val context = LocalContext.current
     var blocked by remember { mutableStateOf(store.blockedApps) }
-    var scope by remember { mutableStateOf(store.shakeLocks) }
-    var appMinutes by remember { mutableIntStateOf(store.lockMinutes) }
-    var phoneMinutes by remember { mutableIntStateOf(store.phoneLockMinutes) }
+    // Lock options live in Settings; re-read them whenever we come back.
+    val scope = remember(setup) { store.shakeLocks }
+    val minutes = remember(setup) { if (scope == LockScope.PHONE) store.phoneLockMinutes else store.lockMinutes }
     var query by remember { mutableStateOf("") }
     val apps by produceState<List<AppEntry>?>(null) {
         value = withContext(Dispatchers.IO) { loadApps(context) }
@@ -191,7 +201,7 @@ private fun SetupScreen(store: LockStore, stats: StatsLog, setup: SetupState) {
 
     LazyColumn(Modifier.fillMaxSize()) {
         item {
-            HeroCard(store, stats, setup.serviceEnabled, scope, if (scope == LockScope.PHONE) phoneMinutes else appMinutes, blocked, apps)
+            HeroCard(store, stats, setup.serviceEnabled, scope, minutes, blocked, apps)
         }
 
         if (!setup.done) {
@@ -199,44 +209,8 @@ private fun SetupScreen(store: LockStore, stats: StatsLog, setup: SetupState) {
         }
 
         item {
-            SettingsCard("When you shake") {
-                LockScopeSelector(scope) {
-                    scope = it
-                    store.shakeLocks = it
-                }
-                Text(
-                    if (scope == LockScope.PHONE) "Everything except calls and your \"instead\" app is blocked, even the home screen."
-                    else "All the apps you tick below get locked.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(top = 8.dp, bottom = 12.dp),
-                )
-                Text("Lock for", style = MaterialTheme.typography.labelLarge)
-                val phone = scope == LockScope.PHONE
-                MinuteChips(
-                    if (phone) PHONE_LOCK_MINUTES else APP_LOCK_MINUTES,
-                    if (phone) phoneMinutes else appMinutes,
-                ) {
-                    if (phone) {
-                        phoneMinutes = it
-                        store.phoneLockMinutes = it
-                    } else {
-                        appMinutes = it
-                        store.lockMinutes = it
-                    }
-                }
-            }
-        }
-
-        item { SmartLockCard(store) }
-
-        item { InsteadAppCard(store, apps) }
-
-        item { CalibrateCard(store) }
-
-        item {
             Text(
-                "Apps to block",
+                "Apps to lock",
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold,
                 modifier = Modifier.padding(start = 20.dp, top = 20.dp, end = 20.dp),
@@ -394,7 +368,7 @@ private fun HeroCard(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun LockScopeSelector(scope: LockScope, onSelect: (LockScope) -> Unit) {
+fun LockScopeSelector(scope: LockScope, onSelect: (LockScope) -> Unit) {
     val options = listOf(LockScope.APPS to "Lock the apps", LockScope.PHONE to "Lock the phone")
     SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
         options.forEachIndexed { index, (option, label) ->
@@ -412,7 +386,7 @@ private fun LockScopeSelector(scope: LockScope, onSelect: (LockScope) -> Unit) {
 }
 
 @Composable
-private fun SettingsCard(title: String, subtitle: String? = null, content: @Composable ColumnScope.() -> Unit) {
+fun SettingsCard(title: String, subtitle: String? = null, content: @Composable ColumnScope.() -> Unit) {
     Card(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
         shape = MaterialTheme.shapes.medium,
@@ -531,7 +505,7 @@ private fun SetupStep(mark: String, title: String, text: String, action: String?
 }
 
 @Composable
-private fun SwitchRow(title: String, description: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+fun SwitchRow(title: String, description: String, checked: Boolean, onChange: (Boolean) -> Unit) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
@@ -549,12 +523,10 @@ private fun SwitchRow(title: String, description: String, checked: Boolean, onCh
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun MinuteChips(options: List<Int>, selected: Int, onSelect: (Int) -> Unit) {
-    Row(
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        modifier = Modifier.horizontalScroll(rememberScrollState()),
-    ) {
+fun MinuteChips(options: List<Int>, selected: Int, onSelect: (Int) -> Unit) {
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         options.forEach { option ->
             FilterChip(selected = option == selected, onClick = { onSelect(option) }, label = { Text("$option min") })
         }
@@ -563,7 +535,7 @@ private fun MinuteChips(options: List<Int>, selected: Int, onSelect: (Int) -> Un
 
 /** Optional extras. */
 @Composable
-private fun SmartLockCard(store: LockStore) {
+fun SmartLockCard(store: LockStore) {
     var charge by remember { mutableStateOf(store.chargeByShaking) }
     var nudge by remember { mutableStateOf(store.nudge) }
     var nudgeMinutes by remember { mutableIntStateOf(store.nudgeMinutes) }
@@ -587,7 +559,7 @@ private fun SmartLockCard(store: LockStore) {
 
 /** The app the lock screen points you to instead, e.g. To-Dodo. */
 @Composable
-private fun InsteadAppCard(store: LockStore, apps: List<AppEntry>?) {
+fun InsteadAppCard(store: LockStore, apps: List<AppEntry>?) {
     var instead by remember { mutableStateOf(store.insteadApp) }
     var picking by remember { mutableStateOf(false) }
 
@@ -662,7 +634,7 @@ private fun InsteadAppCard(store: LockStore, apps: List<AppEntry>?) {
 
 /** Sensitivity, a live shake tester and service diagnostics - folded away by default. */
 @Composable
-private fun CalibrateCard(store: LockStore) {
+fun CalibrateCard(store: LockStore) {
     var open by rememberSaveable { mutableStateOf(false) }
     var threshold by remember { mutableFloatStateOf(store.shakeThreshold) }
     val diag by Diagnostics.state.collectAsState()
@@ -774,7 +746,7 @@ private fun ShakeTester(threshold: Float) {
     }
 }
 
-private fun loadApps(context: Context): List<AppEntry> {
+fun loadApps(context: Context): List<AppEntry> {
     val pm = context.packageManager
     val usage = AppUsage.lastWeek(context)
     val launcherIntent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)

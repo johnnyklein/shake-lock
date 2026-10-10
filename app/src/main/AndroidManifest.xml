@@ -32,6 +32,11 @@
         </activity>
 
         <activity
+            android:name=".SettingsActivity"
+            android:exported="false"
+            android:screenOrientation="portrait" />
+
+        <activity
             android:name=".BlockedActivity"
             android:excludeFromRecents="true"
             android:screenOrientation="portrait"

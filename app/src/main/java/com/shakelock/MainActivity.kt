@@ -100,6 +100,7 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         store = LockStore(this)
         val stats = StatsLog(this)
+        if (!store.onboarded) startActivity(Intent(this, OnboardingActivity::class.java))
         setContent {
             ShakeLockTheme {
                 MainScreen(store, stats, setup, onSetupChanged = ::refreshSetup)

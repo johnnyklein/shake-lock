@@ -31,6 +31,9 @@ class LockStore(context: Context) {
     /** Set once you've picked a lock time during setup. */
     var lockChosen by boolPref("lock_chosen", false)
 
+    /** Set when the first-start onboarding is finished. */
+    var onboarded by boolPref("onboarded", false)
+
     /** Lock length when [shakeLocks] is [LockScope.PHONE]. */
     var phoneLockMinutes by intPref("phone_lock_minutes", 3)
 
